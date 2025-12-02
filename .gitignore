@@ -43,7 +43,6 @@ output/
 *.txt
 
 # Data
-data/
 *.db
 *.sqlite
 
