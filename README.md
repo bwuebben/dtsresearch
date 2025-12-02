@@ -30,6 +30,20 @@ Establishes that DTS betas differ across bonds BEFORE testing whether Merton exp
 
 **See**: `STAGE_A_GUIDE.md` for detailed documentation
 
+### ✅ Stage B: Does Merton Explain the Variation?
+
+Tests whether Merton's structural model explains the variation documented in Stage A:
+
+1. **Specification B.1**: Merton as offset (constrained) - tests if β_Merton = 1
+2. **Specification B.2**: Decomposed components - tests β_T and β_s separately
+3. **Specification B.3**: Unrestricted - fully flexible comparison
+4. **Theory vs Reality**: Direct comparison of empirical betas to Merton predictions
+5. **Decision paths**: 4 outcomes (theory works / needs calibration / partial / fails)
+
+**Run**: `python run_stageB.py` (~20 seconds)
+
+**Prerequisite**: Stage A finds variation (F-test p < 0.10)
+
 ## Project Structure
 
 ```
@@ -43,20 +57,24 @@ dtsresearch/
 │       ├── analysis/
 │       │   ├── buckets.py             # Bucket classification system
 │       │   ├── stage0.py              # Stage 0 regression analysis
-│       │   └── stageA.py              # Stage A analysis ✨ NEW
+│       │   ├── stageA.py              # Stage A analysis
+│       │   └── stageB.py              # Stage B analysis ✨ NEW
 │       ├── visualization/
 │       │   ├── stage0_plots.py        # Figures 0.1-0.3
-│       │   └── stageA_plots.py        # Figures A.1-A.2 ✨ NEW
+│       │   ├── stageA_plots.py        # Figures A.1-A.2
+│       │   └── stageB_plots.py        # Figures B.1-B.3 ✨ NEW
 │       └── utils/
 │           ├── reporting.py           # Stage 0 reports
-│           └── reportingA.py          # Stage A reports ✨ NEW
+│           ├── reportingA.py          # Stage A reports
+│           └── reportingB.py          # Stage B reports ✨ NEW
 ├── tests/                             # Unit tests
 ├── output/
 │   ├── figures/                       # Generated plots
 │   └── reports/                       # Generated tables and summaries
 ├── run_stage0.py                      # Stage 0 orchestration
-├── run_stageA.py                      # Stage A orchestration ✨ NEW
-├── STAGE_A_GUIDE.md                   # Stage A documentation ✨ NEW
+├── run_stageA.py                      # Stage A orchestration
+├── run_stageB.py                      # Stage B orchestration ✨ NEW
+├── STAGE_A_GUIDE.md                   # Stage A documentation
 ├── requirements.txt                   # Python dependencies
 └── README.md                          # This file
 ```
