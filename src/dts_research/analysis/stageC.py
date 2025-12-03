@@ -2,6 +2,10 @@
 Stage C analysis: Test stability of Merton predictions over time.
 
 Implements rolling window stability tests and macro driver analysis.
+
+Integration with Stage 0:
+- Skips if Path 5 (theory fails) or Path 4 (mixed evidence)
+- Focuses on relevant tests based on Stage 0 findings
 """
 
 import numpy as np
@@ -18,12 +22,48 @@ class StageCAnalysis:
 
     Tests whether the relationship between lambda and (s, T) is stable over time,
     or whether macro state variables induce time-variation.
+
+    Integrates with Stage 0 to skip if theory fails or shows mixed evidence.
     """
 
-    def __init__(self):
-        """Initialize Stage C analysis."""
+    def __init__(self, stage0_results: Optional[Dict] = None):
+        """
+        Initialize Stage C analysis.
+
+        Args:
+            stage0_results: Optional Stage 0 results dictionary
+        """
         from ..models.merton import MertonLambdaCalculator
         self.merton_calc = MertonLambdaCalculator()
+        self.stage0_results = stage0_results
+        self.stage0_path = stage0_results.get('decision_path') if stage0_results else None
+
+    def should_skip_stage_c(self) -> Tuple[bool, str]:
+        """
+        Determine if Stage C should be skipped based on Stage 0.
+
+        Returns:
+            (should_skip, reason) tuple
+        """
+        if self.stage0_path is None:
+            return False, "No Stage 0 results available"
+
+        if self.stage0_path == 5:
+            return True, (
+                "Stage 0 Decision Path 5: Theory Fails\n"
+                "Stage C (theory-driven time-variation tests) is not applicable.\n"
+                "Recommendation: Skip Stage C."
+            )
+
+        if self.stage0_path == 4:
+            return True, (
+                "Stage 0 Decision Path 4: Mixed Evidence\n"
+                "Theory shows weak/inconsistent support.\n"
+                "Stage C time-variation tests may not be informative.\n"
+                "Recommendation: Skip Stage C or run selectively."
+            )
+
+        return False, f"Stage 0 Path {self.stage0_path}: Proceed with Stage C"
 
     def rolling_window_stability_test(
         self,

@@ -8,15 +8,35 @@ This project implements a multi-stage empirical research program to test whether
 
 ## Implemented Stages
 
-### ✅ Stage 0: Raw Validation Using Bucket-Level Analysis
+### ✅ Stage 0: Evolved DTS Foundation Analysis
 
-Provides an assumption-free test of Merton predictions:
+**Three-Pronged Theoretical Validation Framework** that determines whether Merton adequately describes maturity-spread relationships:
 
-1. **Raw validation**: Do bonds in similar buckets exhibit spread sensitivities consistent with structural theory?
-2. **Bucket-level testing**: Pooled regressions with strong statistical power
-3. **Decision point**: Determine whether Merton provides adequate baseline
+1. **Bucket-Level Analysis (Spec 0.1)**: Cross-sectional regression on 72 buckets (8 ratings × 9 maturities)
+   - Tests: λ > 0, monotonicity across maturities
+   - Separate IG and HY universes
 
-**Run**: `python run_stage0.py` (~10 seconds)
+2. **Within-Issuer Analysis (Spec 0.2)**: Issuer-week fixed effects
+   - Same issuer, different maturities → isolates maturity effect
+   - Inverse-variance weighted pooling across issuer-weeks
+   - Requires ≥3 bonds per issuer-week, ≥2 years dispersion
+
+3. **Sector Interaction Analysis (Spec 0.3)**: Tests if sectors differ systematically
+   - Financial, Utility, Energy vs Industrial (baseline)
+   - Joint F-test + individual sector tests
+
+**Five Decision Paths**:
+- **Path 1**: Perfect Alignment → standard specs throughout
+- **Path 2**: Sector Heterogeneity → add sector terms
+- **Path 3**: Weak Evidence → proceed cautiously
+- **Path 4**: Mixed Evidence → selective use
+- **Path 5**: Theory Fails → alternative models needed
+
+**Run**: `python run_stage0.py --start-date 2020-01-01 --end-date 2023-12-31` (~3 minutes)
+
+**Output**: 10 figures, 17 tables, executive summary with decision path
+
+**See**: `STAGE_0_GUIDE.md` and `STAGE_0_COMPLETE.md` for detailed documentation
 
 ### ✅ Stage A: Establish Cross-Sectional Variation
 
@@ -25,6 +45,11 @@ Establishes that DTS betas differ across bonds BEFORE testing whether Merton exp
 1. **Specification A.1**: Bucket-level betas with F-tests for equality
 2. **Specification A.2**: Continuous characteristics (rolling window estimation)
 3. **Critical decision**: If no variation, standard DTS adequate → STOP
+
+**Stage 0 Integration**:
+- Skips if Path 5 (theory fails)
+- Can reuse Stage 0 buckets if Path 1 or 2 (efficiency)
+- Decision framework includes Stage 0 consistency checks
 
 **Run**: `python run_stageA.py` (~15 seconds without Spec A.2, ~3 minutes with)
 
@@ -36,13 +61,17 @@ Tests whether Merton's structural model explains the variation documented in Sta
 
 1. **Specification B.1**: Merton as offset (constrained) - tests if β_Merton = 1
 2. **Specification B.2**: Decomposed components - tests β_T and β_s separately
-3. **Specification B.3**: Unrestricted - fully flexible comparison
+3. **Specification B.3**: Unrestricted - fully flexible comparison (includes sector dummies)
 4. **Theory vs Reality**: Direct comparison of empirical betas to Merton predictions
 5. **Decision paths**: 4 outcomes (theory works / needs calibration / partial / fails)
 
+**Stage 0 Integration**:
+- Skips if Path 5 (theory fails)
+- Spec B.3 includes sector adjustments (already implemented)
+
 **Run**: `python run_stageB.py` (~20 seconds)
 
-**Prerequisite**: Stage A finds variation (F-test p < 0.10)
+**Prerequisite**: Stage A finds variation (F-test p < 0.10) OR Stage 0 Path 1-4
 
 **See**: `STAGE_B_GUIDE.md` for detailed documentation
 
@@ -56,9 +85,13 @@ Tests whether the relationship is stable over time or requires time-varying adju
 4. **Economic significance**: Effect > 20% threshold for practical relevance
 5. **Decision paths**: 3 outcomes (static sufficient / marginal / time-varying needed)
 
+**Stage 0 Integration**:
+- Skips if Path 5 (theory fails) or Path 4 (mixed evidence)
+- Theory-driven time-variation tests only valid if theory works
+
 **Run**: `python run_stageC.py` (~25-30 seconds)
 
-**Prerequisite**: Stage B showed Merton explains variation (Paths 1-3)
+**Prerequisite**: Stage B showed Merton explains variation (Paths 1-3) AND Stage 0 Path 1-3
 
 **See**: `STAGE_C_GUIDE.md` for detailed documentation
 
@@ -72,9 +105,13 @@ Tests whether Merton predictions hold across three dimensions:
 4. **Production recommendations**: Tail adjustments, shock-type considerations, liquidity decomposition
 5. **Decision framework**: When to use tail-specific λ, shock-specific factors, or OAS decomposition
 
+**Stage 0 Integration**:
+- Path 5: Focuses on model-free robustness only (skip Merton-specific tests)
+- Path 1-4: Runs full Stage D (theory + robustness)
+
 **Run**: `python run_stageD.py` (~30-40 seconds)
 
-**Prerequisite**: Stages 0, A, B, C completed
+**Prerequisite**: Stages 0, A, B, C completed (can run with Path 5 for model-free checks)
 
 **Key Framing**: SECONDARY tests (refine production model, not core validation)
 
@@ -99,6 +136,12 @@ Selects the parsimonious production model via hierarchical testing, balancing th
 
 **Prerequisite**: Stages 0, A, B, C, D completed
 
+**Stage 0 Integration**:
+- Path 5: Only tests Level 1 (Standard DTS) and Level 4 (Full Empirical) - skips Merton-based levels
+- Path 1-2: Tests all levels 1-5
+- Path 3: Tests levels 1, 3, 4 (skips pure Merton)
+- Path 4: Tests levels 1, 4 only
+
 **Key Philosophy**: Theory provides strong prior. Only deviate when data strongly rejects it.
 
 **See**: `STAGE_E_GUIDE.md` for detailed documentation
@@ -110,31 +153,36 @@ dtsresearch/
 ├── src/
 │   └── dts_research/
 │       ├── data/
-│       │   └── loader.py              # Data loading and mock data generation
+│       │   ├── loader.py              # Data loading and mock data generation
+│       │   ├── sector_classification.py  # Bloomberg BCLASS3 sector mapping
+│       │   └── issuer_identification.py  # Composite issuer ID (parent + seniority)
 │       ├── models/
 │       │   └── merton.py              # Merton lambda calculations
 │       ├── analysis/
 │       │   ├── buckets.py             # Bucket classification system
-│       │   ├── stage0.py              # Stage 0 regression analysis
+│       │   ├── stage0_bucket.py       # Stage 0 Spec 0.1: Bucket-level analysis
+│       │   ├── stage0_within_issuer.py # Stage 0 Spec 0.2: Within-issuer analysis
+│       │   ├── stage0_sector.py       # Stage 0 Spec 0.3: Sector interaction
+│       │   ├── stage0.py              # Stage 0 orchestration and decision framework
 │       │   ├── stageA.py              # Stage A analysis
 │       │   ├── stageB.py              # Stage B analysis
 │       │   ├── stageC.py              # Stage C analysis
 │       │   ├── stageD.py              # Stage D analysis
-│       │   └── stageE.py              # Stage E analysis ✨ NEW
+│       │   └── stageE.py              # Stage E analysis
 │       ├── visualization/
-│       │   ├── stage0_plots.py        # Figures 0.1-0.3
+│       │   ├── stage0_plots.py        # Figures 0.1-0.10 (evolved Stage 0)
 │       │   ├── stageA_plots.py        # Figures A.1-A.2
 │       │   ├── stageB_plots.py        # Figures B.1-B.3
 │       │   ├── stageC_plots.py        # Figures C.1-C.4
 │       │   ├── stageD_plots.py        # Figures D.1-D.4
-│       │   └── stageE_plots.py        # Figures E.1-E.4 ✨ NEW
+│       │   └── stageE_plots.py        # Figures E.1-E.4
 │       └── utils/
 │           ├── reporting.py           # Stage 0 reports
 │           ├── reportingA.py          # Stage A reports
 │           ├── reportingB.py          # Stage B reports
 │           ├── reportingC.py          # Stage C reports
 │           ├── reportingD.py          # Stage D reports
-│           └── reportingE.py          # Stage E reports ✨ NEW
+│           └── reportingE.py          # Stage E reports
 ├── tests/                             # Unit tests
 ├── output/
 │   ├── figures/                       # Generated plots
@@ -144,17 +192,19 @@ dtsresearch/
 ├── run_stageB.py                      # Stage B orchestration
 ├── run_stageC.py                      # Stage C orchestration
 ├── run_stageD.py                      # Stage D orchestration
-├── run_stageE.py                      # Stage E orchestration ✨ NEW
+├── run_stageE.py                      # Stage E orchestration
+├── STAGE_0_GUIDE.md                   # Stage 0 documentation
+├── STAGE_0_COMPLETE.md                # Stage 0 implementation summary
 ├── STAGE_A_GUIDE.md                   # Stage A documentation
 ├── STAGE_B_GUIDE.md                   # Stage B documentation
 ├── STAGE_C_GUIDE.md                   # Stage C documentation
 ├── STAGE_D_GUIDE.md                   # Stage D documentation
-├── STAGE_E_GUIDE.md                   # Stage E documentation ✨ NEW
+├── STAGE_E_GUIDE.md                   # Stage E documentation
 ├── STAGE_A_COMPLETE.md                # Stage A implementation summary
 ├── STAGE_B_COMPLETE.md                # Stage B implementation summary
 ├── STAGE_C_COMPLETE.md                # Stage C implementation summary
 ├── STAGE_D_COMPLETE.md                # Stage D implementation summary
-├── STAGE_E_COMPLETE.md                # Stage E implementation summary ✨ NEW
+├── STAGE_E_COMPLETE.md                # Stage E implementation summary
 ├── requirements.txt                   # Python dependencies
 └── README.md                          # This file
 ```
@@ -276,9 +326,9 @@ Compare empirical β to theoretical λ.
 Each stage generates:
 
 ### Stage 0
-- **3 figures**: β vs λ scatter, cross-maturity patterns, regime patterns
-- **4 tables**: Bucket results, cross-maturity, statistical tests, full results
-- **Written summary**: 2-3 pages with decision recommendation
+- **10 figures**: Bucket analysis (scatter, heatmaps, distribution), within-issuer analysis (3 plots), sector interaction (3 plots), decision framework visualization
+- **17 tables**: Spec 0.1 (bucket results, tests), Spec 0.2 (within-issuer results, pooled estimates), Spec 0.3 (sector effects, joint tests), decision framework
+- **Executive summary**: 3-5 pages with five-path decision recommendation
 
 ### Stage A
 - **3 figures**: Beta heatmap, 3D surface, contour plot
@@ -305,7 +355,7 @@ Each stage generates:
 - **4+ tables**: Hierarchical tests, model comparison, performance by regime, production spec, regime pivots
 - **Implementation blueprint**: 5-7 page detailed guide with pseudo-code, recalibration protocol, monitoring framework
 
-**Total Outputs**: 23 figures + 24+ tables + 6 written summaries + 1 implementation blueprint
+**Total Outputs**: 30 figures + 38+ tables + 6 written summaries + 1 implementation blueprint
 
 ## Key Features
 
@@ -356,18 +406,22 @@ pytest --cov=src/dts_research tests/
 
 All stages (0, A, B, C, D, E) are complete and production-ready:
 
-- ✅ **Stage 0**: Raw validation using bucket-level analysis
-- ✅ **Stage A**: Establish cross-sectional variation
-- ✅ **Stage B**: Does Merton explain the variation?
-- ✅ **Stage C**: Does static Merton suffice or do we need time-variation?
-- ✅ **Stage D**: Robustness and extensions
-- ✅ **Stage E**: Production specification selection
+- ✅ **Stage 0**: Evolved DTS foundation with three-pronged theoretical validation
+- ✅ **Stage A**: Establish cross-sectional variation (Stage 0 integrated)
+- ✅ **Stage B**: Does Merton explain the variation? (Stage 0 integrated)
+- ✅ **Stage C**: Does static Merton suffice or do we need time-variation? (Stage 0 integrated)
+- ✅ **Stage D**: Robustness and extensions (Stage 0 integrated)
+- ✅ **Stage E**: Production specification selection (Stage 0 integrated)
 
 **Total Implementation**:
-- ~12,259 lines of production Python code
+- ~17,514 lines of production Python code
+  - Phase 1 (Core Infrastructure): ~1,700 lines
+  - Phase 2 (Evolved Stage 0): ~4,900 lines
+  - Phase 3 (Stages A-E Integration): ~355 lines
+  - Original Stages A-E: ~10,559 lines
 - ~150-190 seconds total runtime with mock data
-- 23 publication-quality figures
-- 24+ comprehensive tables
+- 30 publication-quality figures
+- 38+ comprehensive tables
 - 6 written summaries
 - 1 production implementation blueprint
 

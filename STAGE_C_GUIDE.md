@@ -11,6 +11,35 @@
 - If Chow test p < 0.10 AND macro R² > 0.05 → Time-varying lambda needed (PATH 2)
 - If Chow test p < 0.10 BUT macro R² < 0.05 → Regime switches exist but no clear driver (PATH 3)
 
+## Stage 0 Integration
+
+Stage C integrates with evolved Stage 0's decision framework:
+
+**Decision Path Handling**:
+- **Path 4 or 5 (Mixed/Theory Fails)**: Stage C is SKIPPED entirely
+- **Path 1-3**: Stage C runs normally to test time-variation
+
+**Why Paths 4-5 Skip Stage C**:
+- Time-variation tests are THEORY-DRIVEN (testing if Merton's λ varies with macro conditions)
+- If theory doesn't adequately describe baseline (Path 4) or fails outright (Path 5), testing theory-driven time-variation is meaningless
+- Path 4-5 should focus on model-free empirical approaches instead
+
+**Loading Stage 0 Results**:
+```python
+from dts_research.analysis.stageC import StageCAnalysis
+
+# Load Stage 0 decision path
+stage0_results = StageCAnalysis.load_stage0_results('output')
+
+# Initialize with Stage 0 context
+analyzer = StageCAnalysis(stage0_results=stage0_results)
+
+# Check if should skip
+should_skip, reason = analyzer.should_skip_stage_c()
+if should_skip:
+    print(f"Skipping Stage C: {reason}")
+```
+
 ---
 
 ## Theoretical Foundation

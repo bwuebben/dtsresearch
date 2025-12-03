@@ -13,6 +13,37 @@
 
 **Not a standalone stage**: Results inform production spec decisions in Stage E
 
+## Stage 0 Integration
+
+Stage D integrates with evolved Stage 0's decision framework:
+
+**Decision Path Handling**:
+- **Path 5 (Theory Fails)**: Stage D focuses on MODEL-FREE robustness only
+  - Skips Merton-specific tail amplification tests (D.1)
+  - Focuses on empirical shock decomposition (D.2) and liquidity analysis (D.3)
+- **Path 1-4**: Stage D runs full analysis (theory + robustness)
+
+**Why Path 5 Modifies Stage D**:
+- Merton-specific tests (e.g., "Does λ amplify correctly in tails?") are irrelevant if theory doesn't work
+- But robustness dimensions (shocks, liquidity) are still useful for understanding spread dynamics
+- Path 5 treats Stage D as diagnostic tool, not theory validation
+
+**Loading Stage 0 Results**:
+```python
+from dts_research.analysis.stageD import StageDAnalysis
+
+# Load Stage 0 decision path
+stage0_results = StageDAnalysis.load_stage0_results('output')
+
+# Initialize with Stage 0 context
+analyzer = StageDAnalysis(stage0_results=stage0_results)
+
+# Check if should focus on model-free
+model_free, reason = analyzer.should_focus_model_free()
+if model_free:
+    print(f"Stage D (model-free focus): {reason}")
+```
+
 ---
 
 ## Theoretical Foundation

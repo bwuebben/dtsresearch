@@ -17,19 +17,22 @@ This project implements a complete multi-stage empirical research program (Stage
 
 ### 1. Data Layer (`src/dts_research/data/`)
 
-**Purpose**: Load and prepare bond data
+**Purpose**: Load, classify, and prepare bond data
 
 **Key classes**:
 - `BondDataLoader`: Handles database connectivity and data retrieval
+- `SectorClassifier`: Maps Bloomberg BCLASS3 to research sectors (Financial, Utility, Energy, Industrial)
+- `issuer_identification`: Creates composite issuer ID (Ultimate Parent + Seniority)
 
 **Design patterns**:
 - **Abstraction**: Single interface for both real and mock data
 - **Lazy loading**: Connection established only when needed
 - **User customization**: Clear TODOs for database-specific code
+- **Sector standardization**: Consistent sector classification across all stages
 
 **Data flow**:
 ```
-Database/Mock → BondDataLoader → Pandas DataFrame → Analysis modules
+Database/Mock → BondDataLoader → SectorClassifier → Issuer ID → Pandas DataFrame → Analysis modules
 ```
 
 **Schema**:
@@ -41,8 +44,16 @@ Required columns:
 - rating: str
 - maturity_date: datetime
 - time_to_maturity: float (years)
-- sector: str
-- issuer_id: str
+- sector: str (or sector_classification for BCLASS3)
+- issuer_id: str (composite: ultimate_parent_id + seniority)
+- ultimate_parent_id: str (for within-issuer analysis)
+- seniority: str (for within-issuer analysis)
+
+Added by classification:
+- sector_research: str ('Financial', 'Utility', 'Energy', 'Industrial')
+- is_financial: bool
+- is_utility: bool
+- is_energy: bool
 ```
 
 ### 2. Models Layer (`src/dts_research/models/`)
@@ -94,64 +105,97 @@ Sectors: Any (user-defined)
 Total buckets: 6 ratings × 6 maturities × N sectors
 ```
 
-#### 3.2 Stage 0 Analysis (`stage0.py`)
+#### 3.2 Stage 0 Analysis (Evolved DTS Foundation)
 
-**Key class**: `Stage0Analysis`
+**Purpose**: Three-pronged theoretical validation framework to determine if Merton adequately describes maturity-spread relationships
 
-**Pipeline**:
-1. `prepare_regression_data()` - Compute percentage changes
-2. `run_bucket_regression()` - Pooled OLS per bucket
-3. `run_all_bucket_regressions()` - Iterate over all buckets
-4. Statistical tests:
-   - `test_level_hypothesis()` - H₀: β = λ
-   - `test_cross_maturity_pattern()` - Monotonicity
-   - `test_regime_pattern()` - Dispersion vs spread
-5. `identify_outliers()` - Flag extreme deviations
-6. `generate_decision_recommendation()` - Next steps
+**Key modules**:
+- `stage0_bucket.py` (~820 lines): Spec 0.1 - Bucket-level cross-sectional analysis
+- `stage0_within_issuer.py` (~920 lines): Spec 0.2 - Within-issuer fixed effects with inverse-variance weighted pooling
+- `stage0_sector.py` (~800 lines): Spec 0.3 - Sector interaction tests (Financial, Utility, Energy vs Industrial baseline)
+- `stage0.py` (~1,050 lines): Orchestration class and five-path decision framework
 
-**Regression specification**:
+**Specification 0.1 (Bucket-Level)**:
 ```python
-y_i,t = α + β · f_DTS,t + ε_i,t
+y_i,t = α^(k) + β^(k) · f_DTS,t + ε_i,t
 
 where:
-- y_i,t: percentage spread change for bond i
+- y_i,t: percentage spread change for bond i in bucket k
 - f_DTS,t: index-level percentage spread change
 - Clustered standard errors by week
-- OLS estimation via statsmodels
+- Test: β^(k) vs λ^Merton, monotonicity across maturities
 ```
 
-#### 3.3 Stage A-E Analysis Modules
+**Specification 0.2 (Within-Issuer)**:
+```python
+y_i,t = α_j,w + β_T · TTM_i,w + ε_i,t
 
-**Stage A** (`stageA.py` - ~770 lines):
+where:
+- α_j,w: issuer-week fixed effects (absorbs credit quality)
+- β_T: maturity sensitivity (same issuer, different maturities)
+- Inverse-variance weighted pooling across issuer-weeks
+- Requires: ≥3 bonds per issuer-week, ≥2 years TTM dispersion
+```
+
+**Specification 0.3 (Sector Interaction)**:
+```python
+y_i,t = α^(k) + β^(k) · f_DTS,t +
+        γ_F^(m) · (Financial_i × f_DTS,t) +
+        γ_U^(m) · (Utility_i × f_DTS,t) +
+        γ_E^(m) · (Energy_i × f_DTS,t) + ε_i,t
+
+where:
+- γ_*^(m): sector-specific deviations by maturity
+- Test: Joint F-test (all sectors = 0), individual sector tests
+- Clustered by issuer or week
+```
+
+**Five Decision Paths**:
+1. **Path 1 (Perfect Alignment)**: All three specs support theory → Use standard Merton throughout
+2. **Path 2 (Sector Heterogeneity)**: Specs 0.1-0.2 support theory, Spec 0.3 finds sector differences → Add sector adjustments
+3. **Path 3 (Weak Evidence)**: Mixed signals, modest effects → Proceed cautiously with alternative tests
+4. **Path 4 (Mixed Evidence)**: Conflicting results → Use model-free approaches, skip time-variation tests
+5. **Path 5 (Theory Fails)**: Theory clearly fails → Focus on purely empirical models
+
+#### 3.3 Stage A-E Analysis Modules (Stage 0 Integrated)
+
+**Stage A** (`stageA.py` - ~890 lines including Stage 0 integration):
 - Spec A.1: Bucket-level betas with F-tests for equality
 - Spec A.2: Continuous characteristics with rolling windows
-- Decision: Proceed if variation exists (F-test p < 0.10)
+- **Stage 0 Integration**: Skips if Path 5, can reuse buckets if Path 1-2
+- Decision: Proceed if variation exists (F-test p < 0.10) OR Stage 0 Path 1-4
 
-**Stage B** (`stageB.py` - ~830 lines):
+**Stage B** (`stageB.py` - ~880 lines including Stage 0 integration):
 - Spec B.1: Merton as offset (constrained β=1)
 - Spec B.2: Decomposed components (β_T, β_s)
-- Spec B.3: Unrestricted empirical model
+- Spec B.3: Unrestricted empirical model (includes sector dummies)
+- **Stage 0 Integration**: Skips if Path 5
 - Decision: 4 paths based on theory fit
 
-**Stage C** (`stageC.py` - ~780 lines):
+**Stage C** (`stageC.py` - ~835 lines including Stage 0 integration):
 - Rolling window stability tests (Chow test)
 - Macro driver analysis (VIX, OAS interaction)
 - Maturity-specific time-variation
+- **Stage 0 Integration**: Skips if Path 4 or 5 (time-variation tests require working theory)
 - Decision: Static vs time-varying needed
 
-**Stage D** (`stageD.py` - ~870 lines):
+**Stage D** (`stageD.py` - ~920 lines including Stage 0 integration):
 - D.1: Tail behavior (quantile regression)
 - D.2: Shock decomposition (global, sector, issuer)
 - D.3: Liquidity adjustment (default + liquidity)
+- **Stage 0 Integration**: Path 5 focuses on model-free robustness only
 - Production recommendations for each extension
 
-**Stage E** (`stageE.py` - ~810 lines):
+**Stage E** (`stageE.py` - ~890 lines including Stage 0 integration):
 - Hierarchical testing framework (5 levels)
 - Out-of-sample validation (rolling windows)
 - Performance by regime (Normal/Stress/Crisis)
+- **Stage 0 Integration**: Path 5 only tests levels 1 and 4 (skips Merton-based levels)
 - Production blueprint generation
 
 **Common patterns across all stages**:
+- Accept optional `stage0_results` parameter in constructor
+- Check decision path and conditionally skip/modify analyses
 - Use Stage0's `prepare_regression_data()` as foundation
 - Cluster standard errors (by week or issuer)
 - Statistical tests with clear decision criteria
@@ -162,14 +206,14 @@ where:
 **Purpose**: Generate publication-quality figures for all stages
 
 **Visualizer classes**:
-- `Stage0Visualizer` (~280 lines): 3 figures for raw validation
+- `Stage0Visualizer` (~650 lines): 10 figures for evolved DTS foundation (3 per spec + decision viz)
 - `StageAVisualizer` (~390 lines): 3 figures for cross-sectional variation
 - `StageBVisualizer` (~530 lines): 4 figures for Merton explanation
 - `StageCVisualizer` (~580 lines): 4 figures for stability/time-variation
 - `StageDVisualizer` (~530 lines): 4 figures for robustness extensions
 - `StageEVisualizer` (~510 lines): 4 figures for production selection
 
-**Total**: 23 publication-quality figures across all stages
+**Total**: 30 publication-quality figures across all stages
 
 **Common design features**:
 - Seaborn styling for consistency
@@ -185,14 +229,14 @@ where:
 **Purpose**: Reporting and output for all stages
 
 **Reporter classes**:
-- `Stage0Reporter` (~370 lines): 4 tables + 2-3 page summary
+- `Stage0Reporter` (~1,050 lines): 17 tables + 3-5 page executive summary
 - `StageAReporter` (~360 lines): 3+ tables + 2 page summary
 - `StageBReporter` (~570 lines): 4 tables + 3-4 page summary
 - `StageCReporter` (~520 lines): 3+ tables + 3-4 page summary
 - `StageDReporter` (~700 lines): 7 tables + 3-4 page summary
 - `StageEReporter` (~780 lines): 4+ tables + 5-7 page implementation blueprint
 
-**Total**: 24+ tables + 6 written summaries + 1 implementation blueprint
+**Total**: 38+ tables + 6 written summaries + 1 implementation blueprint
 
 **Common report structure**:
 1. Executive summary with decision
@@ -220,34 +264,49 @@ where:
 └────────┬────────┘
          │
          ▼
-┌─────────────────┐
-│ BondDataLoader  │
-│  - Load data    │
-│  - Validate     │
-└────────┬────────┘
+┌──────────────────┐
+│ BondDataLoader   │
+│  - Load data     │
+│  - Validate      │
+└────────┬─────────┘
          │
          ▼
-┌─────────────────┐
-│BucketClassifier │
-│  - Classify     │
-│  - Aggregate    │
-│  - Merton λ     │
-└────────┬────────┘
+┌──────────────────┐
+│SectorClassifier  │
+│  - BCLASS3 map   │
+│  - Add dummies   │
+└────────┬─────────┘
          │
          ▼
-┌─────────────────┐
-│ Stage0Analysis  │
-│  - Regressions  │
-│  - Stat tests   │
-│  - Outliers     │
-└────────┬────────┘
+┌──────────────────┐
+│Issuer ID         │
+│  - Composite ID  │
+│  - Parent+Senior │
+└────────┬─────────┘
          │
-         ├──────────────┬──────────────┐
-         ▼              ▼              ▼
-┌──────────────┐ ┌──────────┐ ┌──────────┐
-│Visualizer    │ │Reporter  │ │CSV output│
-│ - 3 figures  │ │- 2 tables│ │- Raw data│
-└──────────────┘ └──────────┘ └──────────┘
+         ▼
+┌──────────────────┐
+│BucketClassifier  │
+│  - Classify      │
+│  - Aggregate     │
+│  - Merton λ      │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Stage0Analysis   │
+│  - Spec 0.1      │
+│  - Spec 0.2      │
+│  - Spec 0.3      │
+│  - Decision Path │
+└────────┬─────────┘
+         │
+         ├──────────────┬──────────────┬──────────────┐
+         ▼              ▼              ▼              ▼
+┌──────────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐
+│Visualizer    │ │Reporter  │ │CSV output│ │Stage A-E   │
+│ - 10 figures │ │-17 tables│ │- Raw data│ │(integrated)│
+└──────────────┘ └──────────┘ └──────────┘ └────────────┘
 ```
 
 ### Regression Workflow
@@ -371,7 +430,7 @@ pytest tests/ -v --cov=src/dts_research
 
 Run complete pipeline with mock data:
 ```bash
-python run_stage0.py  # ~10 seconds
+python run_stage0.py  # ~3 minutes (evolved with 3 specs)
 python run_stageA.py  # ~15 seconds (without Spec A.2)
 python run_stageB.py  # ~20 seconds
 python run_stageC.py  # ~25-30 seconds
@@ -379,7 +438,7 @@ python run_stageD.py  # ~30-40 seconds
 python run_stageE.py  # ~45-60 seconds
 
 # Or run all sequentially
-for script in run_stage*.py; do python $script; done  # ~150-190 seconds total
+for script in run_stage*.py; do python $script; done  # ~5-6 minutes total
 ```
 
 ### Validation Checks
@@ -459,14 +518,6 @@ For larger datasets:
 - Version control friendly (no binary files in repo)
 
 ## Future Enhancements
-
-### Planned Features
-
-1. **Stage A-E implementations**
-2. **Panel regression methods**
-3. **Time-varying parameter estimation**
-4. **Robustness tests**
-5. **Alternative structural models**
 
 ### Potential Improvements
 

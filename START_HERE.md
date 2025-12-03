@@ -18,9 +18,9 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Run a Stage (30 seconds to 3 minutes)
+### 2. Run a Stage (15 seconds to 3 minutes)
 
-**Stage 0: Raw Validation (~10 seconds)**
+**Stage 0: Evolved DTS Foundation (~3 minutes)**
 ```bash
 python run_stage0.py
 ```
@@ -73,14 +73,26 @@ ls output/reports/*.csv
 ```
 output/
 ├── figures/
-│   ├── stage0_fig1_scatter.png          # β vs λ scatter plot
-│   ├── stage0_fig2_crossmaturity.png    # Cross-maturity patterns
-│   └── stage0_fig3_regimes.png          # Regime patterns
+│   ├── stage0_fig01_bucket_scatter.png      # Spec 0.1: β vs λ scatter
+│   ├── stage0_fig02_bucket_heatmap.png      # Spec 0.1: Beta heatmap
+│   ├── stage0_fig03_bucket_distribution.png # Spec 0.1: Distribution
+│   ├── stage0_fig04_within_coef.png         # Spec 0.2: Maturity coefficients
+│   ├── stage0_fig05_within_weights.png      # Spec 0.2: Inverse-variance weights
+│   ├── stage0_fig06_within_issuer_dist.png  # Spec 0.2: Issuer distribution
+│   ├── stage0_fig07_sector_maturity.png     # Spec 0.3: Sector × maturity
+│   ├── stage0_fig08_sector_effects.png      # Spec 0.3: Sector coefficients
+│   ├── stage0_fig09_sector_ftest.png        # Spec 0.3: F-test results
+│   └── stage0_fig10_decision_summary.png    # Decision framework visualization
 └── reports/
-    ├── stage0_summary.txt               # 2-3 page analysis
-    ├── stage0_table01_bucket_results.csv
-    ├── stage0_table02_cross_maturity.csv
-    └── stage0_full_results.csv
+    ├── stage0_summary.txt               # 3-5 page executive summary
+    ├── stage0_table01_spec01_bucket_results.csv
+    ├── stage0_table02_spec01_tests.csv
+    ├── stage0_table03_spec02_within_issuer.csv
+    ├── stage0_table04_spec02_pooled.csv
+    ├── stage0_table05_spec03_sector_effects.csv
+    ├── stage0_table06_spec03_joint_tests.csv
+    ├── stage0_decision_framework.csv
+    └── stage0_full_results.csv          # Complete output (all specs)
 ```
 
 ### Stage A Outputs
@@ -220,31 +232,36 @@ dtsresearch/
 │
 ├── src/dts_research/          ← Source code
 │   ├── data/
-│   │   └── loader.py          ← Data loading and mock data
+│   │   ├── loader.py                 ← Data loading and mock data
+│   │   ├── sector_classification.py  ← Bloomberg BCLASS3 sector mapping
+│   │   └── issuer_identification.py  ← Composite issuer ID
 │   ├── models/
-│   │   └── merton.py          ← Merton lambda calculations
+│   │   └── merton.py                 ← Merton lambda calculations
 │   ├── analysis/
-│   │   ├── buckets.py         ← Bucket classification
-│   │   ├── stage0.py          ← Stage 0 analysis
-│   │   ├── stageA.py          ← Stage A analysis
-│   │   ├── stageB.py          ← Stage B analysis
-│   │   ├── stageC.py          ← Stage C analysis
-│   │   ├── stageD.py          ← Stage D analysis
-│   │   └── stageE.py          ← Stage E analysis ✨ NEW
+│   │   ├── buckets.py                ← Bucket classification
+│   │   ├── stage0_bucket.py          ← Stage 0 Spec 0.1
+│   │   ├── stage0_within_issuer.py   ← Stage 0 Spec 0.2
+│   │   ├── stage0_sector.py          ← Stage 0 Spec 0.3
+│   │   ├── stage0.py                 ← Stage 0 orchestration
+│   │   ├── stageA.py                 ← Stage A analysis
+│   │   ├── stageB.py                 ← Stage B analysis
+│   │   ├── stageC.py                 ← Stage C analysis
+│   │   ├── stageD.py                 ← Stage D analysis
+│   │   └── stageE.py                 ← Stage E analysis
 │   ├── visualization/
-│   │   ├── stage0_plots.py    ← Figures 0.1-0.3
-│   │   ├── stageA_plots.py    ← Figures A.1-A.2
-│   │   ├── stageB_plots.py    ← Figures B.1-B.3
-│   │   ├── stageC_plots.py    ← Figures C.1-C.4
-│   │   ├── stageD_plots.py    ← Figures D.1-D.4
-│   │   └── stageE_plots.py    ← Figures E.1-E.4 ✨ NEW
+│   │   ├── stage0_plots.py           ← Figures 0.1-0.10
+│   │   ├── stageA_plots.py           ← Figures A.1-A.2
+│   │   ├── stageB_plots.py           ← Figures B.1-B.3
+│   │   ├── stageC_plots.py           ← Figures C.1-C.4
+│   │   ├── stageD_plots.py           ← Figures D.1-D.4
+│   │   └── stageE_plots.py           ← Figures E.1-E.4
 │   └── utils/
-│       ├── reporting.py       ← Stage 0 reports
-│       ├── reportingA.py      ← Stage A reports
-│       ├── reportingB.py      ← Stage B reports
-│       ├── reportingC.py      ← Stage C reports
-│       ├── reportingD.py      ← Stage D reports
-│       └── reportingE.py      ← Stage E reports ✨ NEW
+│       ├── reporting.py              ← Stage 0 reports
+│       ├── reportingA.py             ← Stage A reports
+│       ├── reportingB.py             ← Stage B reports
+│       ├── reportingC.py             ← Stage C reports
+│       ├── reportingD.py             ← Stage D reports
+│       └── reportingE.py             ← Stage E reports
 │
 ├── tests/                     ← Unit tests
 └── output/                    ← Generated outputs (after running)
@@ -252,22 +269,38 @@ dtsresearch/
 
 ## What Each Stage Does
 
-### Stage 0: Raw Validation Using Bucket-Level Analysis
+### Stage 0: Evolved DTS Foundation (Three-Pronged Theoretical Validation)
 
-1. **Classifies bonds into buckets**
-   - Rating: AAA/AA, A, BBB, BB, B, CCC
-   - Maturity: 1-2y, 2-3y, 3-5y, 5-7y, 7-10y, 10y+
-   - Sector: Your classification
+**Purpose**: Determine if Merton adequately describes maturity-spread relationships BEFORE testing variation
 
-2. **Runs pooled regressions per bucket**
-   - y_i,t = α + β·f_DTS,t + ε
-   - Clustered standard errors by week
+**Three Specifications**:
 
-3. **Compares to Merton theory**
-   - Calculate theoretical λ^Merton for each bucket
-   - Test whether β ≈ λ
+1. **Specification 0.1: Bucket-Level Analysis**
+   - Classify bonds into 72 buckets (8 ratings × 9 maturities)
+   - Run pooled regression per bucket: y_i,t = α^(k) + β^(k) · f_DTS,t + ε
+   - Compare β^(k) vs λ^Merton, test monotonicity across maturities
+   - Separate IG and HY universes
 
-4. **Decision**: Does Merton provide adequate baseline?
+2. **Specification 0.2: Within-Issuer Analysis**
+   - Use issuer-week fixed effects to isolate maturity effect
+   - Same issuer, different maturities → pure maturity sensitivity
+   - Inverse-variance weighted pooling across issuer-weeks
+   - Requires ≥3 bonds per issuer-week, ≥2 years TTM dispersion
+
+3. **Specification 0.3: Sector Interaction Analysis**
+   - Test if Financial, Utility, Energy sectors differ from Industrial (baseline)
+   - Sector dummies × f_DTS interactions
+   - Joint F-test + individual sector tests
+   - Identifies systematic sector heterogeneity
+
+4. **Five Decision Paths**:
+   - **Path 1**: Perfect Alignment → Standard Merton throughout
+   - **Path 2**: Sector Heterogeneity → Add sector adjustments
+   - **Path 3**: Weak Evidence → Proceed cautiously
+   - **Path 4**: Mixed Evidence → Model-free approaches, skip time-variation
+   - **Path 5**: Theory Fails → Skip Merton-based tests, purely empirical
+
+**Integration**: All Stages A-E check decision path and conditionally skip/modify analyses
 
 ### Stage A: Establish Cross-Sectional Variation
 
@@ -615,15 +648,18 @@ Based on your Stage B decision path:
 
 ## Implementation Statistics
 
-- **Stage 0**: ~2,427 lines of code
-- **Stage A**: ~1,714 lines of code
-- **Stage B**: ~1,818 lines of code
-- **Stage C**: ~1,650 lines of code
-- **Stage D**: ~1,910 lines of code
-- **Stage E**: ~2,740 lines of code
-- **Total**: ~12,259 lines of production Python code
-- **Runtime**: ~150-190 seconds total with mock data
-- **Outputs**: 23 figures + 24+ tables + 6 written summaries + 1 implementation blueprint
+- **Stage 0**: ~6,600 lines of code (evolved with 3 specs)
+  - Phase 1 (Core Infrastructure): ~1,700 lines
+  - Phase 2 (Evolved Stage 0): ~4,900 lines
+- **Stage A**: ~1,834 lines of code (Stage 0 integrated)
+- **Stage B**: ~1,868 lines of code (Stage 0 integrated)
+- **Stage C**: ~1,705 lines of code (Stage 0 integrated)
+- **Stage D**: ~1,960 lines of code (Stage 0 integrated)
+- **Stage E**: ~2,820 lines of code (Stage 0 integrated)
+- **Phase 3**: ~355 lines (Stages A-E integration)
+- **Total**: ~17,514 lines of production Python code
+- **Runtime**: ~5-6 minutes total with mock data
+- **Outputs**: 30 figures + 38+ tables + 6 written summaries + 1 implementation blueprint
 
 ## Need Help?
 

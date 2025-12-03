@@ -16,19 +16,19 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## Run Your First Stage (1 minute)
+## Run Your First Stage (3 minutes)
 
-### Stage 0: Raw Validation
+### Stage 0: Evolved DTS Foundation
 
 ```bash
 python run_stage0.py
 ```
 
-**Runtime**: ~10 seconds with mock data
+**Runtime**: ~3 minutes with mock data
 
 **Output**:
-- `output/figures/` - 3 publication-quality figures
-- `output/reports/` - 4 tables and summary report
+- `output/figures/` - 10 publication-quality figures (3 specs + decision viz)
+- `output/reports/` - 17 tables and executive summary
 
 ## Check Results
 
@@ -43,18 +43,18 @@ open output/reports/stage0_table01_bucket_results.csv
 open output/figures/stage0_fig1_scatter.png
 ```
 
-## Run Complete Pipeline (3 minutes)
+## Run Complete Pipeline (5-6 minutes)
 
 ```bash
 # Run all stages sequentially
-python run_stage0.py  # ~10 seconds
+python run_stage0.py  # ~3 minutes (evolved with 3 specs)
 python run_stageA.py  # ~15 seconds
 python run_stageB.py  # ~20 seconds
 python run_stageC.py  # ~25-30 seconds
 python run_stageD.py  # ~30-40 seconds
 python run_stageE.py  # ~45-60 seconds
 
-# Total: ~150-190 seconds (2.5-3 minutes)
+# Total: ~5-6 minutes
 ```
 
 **Or run all at once**:
@@ -66,10 +66,10 @@ done
 
 ## What Gets Generated
 
-### Figures (23 total)
+### Figures (30 total)
 ```bash
 output/figures/
-├── stage0_fig*.png      # 3 figures (β vs λ, cross-maturity, regime)
+├── stage0_fig*.png      # 10 figures (3 specs + decision viz)
 ├── stageA_fig*.png      # 3 figures (heatmap, 3D surface, contour)
 ├── stageB_fig*.png      # 4 figures (scatter, residuals, 2 surfaces)
 ├── stageC_fig*.png      # 4 figures (time series, macro, lambda, crisis)
@@ -77,10 +77,10 @@ output/figures/
 └── stageE_fig*.png      # 4 figures (OOS R², errors, predictions, comparison)
 ```
 
-### Tables (24+ CSV files)
+### Tables (38+ CSV files)
 ```bash
 output/reports/
-├── stage0_*.csv         # 4 tables
+├── stage0_*.csv         # 17 tables (3 specs + decision framework)
 ├── stageA_*.csv         # 3+ tables
 ├── stageB_*.csv         # 4 tables
 ├── stageC_*.csv         # 3+ tables
@@ -91,7 +91,7 @@ output/reports/
 ### Written Reports (7 text files)
 ```bash
 output/reports/
-├── stage0_summary.txt                      # 2-3 pages
+├── stage0_summary.txt                      # 3-5 pages (executive summary)
 ├── stageA_summary.txt                      # 2 pages
 ├── stageB_summary.txt                      # 3-4 pages
 ├── stageC_summary.txt                      # 3-4 pages
@@ -176,17 +176,25 @@ pytest tests/test_merton.py -v
 ## Understand the Research Flow
 
 ```
-Stage 0: Does Merton provide baseline?
-   ↓ YES
+Stage 0: Five-Path Decision Framework
+   Three specs: Bucket-level, Within-issuer, Sector interaction
+   ↓
+   Five Paths: 1=Perfect, 2=Sector, 3=Weak, 4=Mixed, 5=Fails
+   ↓
 Stage A: Does cross-sectional variation exist?
+   (Skips if Path 5, can reuse Stage 0 buckets if Path 1-2)
    ↓ YES
 Stage B: Does Merton explain the variation?
+   (Skips if Path 5)
    ↓ PATH 1-3 (theory works)
 Stage C: Static or time-varying needed?
+   (Skips if Path 4-5, theory-driven tests need working theory)
    ↓
 Stage D: Robustness checks (tail, shocks, liquidity)
+   (Path 5: model-free only)
    ↓
 Stage E: Production specification selection
+   (Path 5: only tests levels 1 & 4)
    ↓
 FINAL: Production blueprint + recommended model
 ```
@@ -234,7 +242,7 @@ cat output/reports/stageE_table_e4_production_spec.csv
 
 ## Common Use Cases
 
-### Use Case 1: Quick Validation (10 seconds)
+### Use Case 1: Quick Validation (3 minutes)
 
 "Does Merton theory provide a reasonable baseline?"
 
@@ -243,7 +251,7 @@ python run_stage0.py
 cat output/reports/stage0_summary.txt
 ```
 
-### Use Case 2: Complete Research Pipeline (3 minutes)
+### Use Case 2: Complete Research Pipeline (5-6 minutes)
 
 "Run the full research program and get production recommendation"
 
@@ -357,7 +365,7 @@ mkdir -p output/figures output/reports
 ### Slow Performance
 
 Mock data (~500 bonds, 2010-2024):
-- Expected: ~150-190 seconds total
+- Expected: ~5-6 minutes total (Stage 0 now ~3 min)
 - If slower: Check CPU, reduce n_bonds in mock data
 
 Real data (1M observations):
@@ -392,18 +400,20 @@ Real data (1M observations):
 
 **You now have**:
 - ✅ Complete DTS research program (Stages 0-E)
-- ✅ ~12,259 lines of production Python code
+- ✅ ~17,514 lines of production Python code
+- ✅ Evolved Stage 0 with three-pronged validation
+- ✅ Five-path decision framework guiding all analysis
 - ✅ Mock data generator for testing
-- ✅ 23 publication-quality figures
-- ✅ 24+ comprehensive tables
+- ✅ 30 publication-quality figures
+- ✅ 38+ comprehensive tables
 - ✅ Production deployment blueprint
 
 **Time investment**:
 - Installation: 2 minutes
-- First run (Stage 0): 10 seconds
-- Complete pipeline: 3 minutes
+- First run (Stage 0): 3 minutes
+- Complete pipeline: 5-6 minutes
 - Understanding results: 10-15 minutes
 
-**Total**: ~15-20 minutes from installation to production recommendation!
+**Total**: ~20-25 minutes from installation to production recommendation!
 
 **Ready to deploy!** 🎉

@@ -7,12 +7,18 @@ documented in Stage A. This is the CORE empirical test of the theoretical framew
 Three specifications:
 B.1: Merton as offset (constrained) - single β_Merton parameter
 B.2: Decomposed components - separate β_T and β_s
-B.3: Unrestricted - fully flexible functional form
+B.3: Unrestricted - fully flexible functional form (includes sector dummies)
+
+Integration with Stage 0:
+- Skips analysis if Path 5 (theory fails)
+- Emphasizes sector effects if Path 2
+- Adjusts interpretation based on Stage 0 findings
 """
 
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
+from pathlib import Path
 import statsmodels.api as sm
 from statsmodels.regression.linear_model import RegressionResults
 from scipy import stats
@@ -24,13 +30,48 @@ class StageBAnalysis:
     Implements Stage B: Test whether Merton explains variation.
 
     Critical objective: Does theory explain the variation documented in Stage A?
+
+    Integrates with Stage 0 to:
+    - Skip if Path 5 (theory fails)
+    - Emphasize sector analysis if Path 2
+    - Provide context for interpretation
     """
 
-    def __init__(self):
+    def __init__(self, stage0_results: Optional[Dict] = None):
+        """
+        Initialize Stage B analysis.
+
+        Args:
+            stage0_results: Optional Stage 0 results dictionary with:
+                - 'decision_path': int (1-5)
+                - 'sector_effects': Whether sectors matter
+        """
         self.merton_calc = MertonLambdaCalculator()
         self.spec_b1_results = None
         self.spec_b2_results = None
         self.spec_b3_results = None
+        self.stage0_results = stage0_results
+        self.stage0_path = stage0_results.get('decision_path') if stage0_results else None
+
+    def should_skip_stage_b(self) -> Tuple[bool, str]:
+        """
+        Determine if Stage B should be skipped based on Stage 0.
+
+        Returns:
+            (should_skip, reason) tuple
+        """
+        if self.stage0_path is None:
+            return False, "No Stage 0 results available"
+
+        if self.stage0_path == 5:
+            return True, (
+                "Stage 0 Decision Path 5: Theory Fails\n"
+                "Merton model does not adequately describe maturity-spread relationships.\n"
+                "Stage B (testing if Merton explains variation) is not applicable.\n"
+                "Recommendation: Skip to alternative modeling approaches."
+            )
+
+        return False, f"Stage 0 Path {self.stage0_path}: Proceed with Stage B"
 
     # =========================================================================
     # Specification B.1: Merton as Offset (Constrained)

@@ -4,9 +4,39 @@
 
 Stage B is the **CORE EMPIRICAL TEST** of the research program. It tests whether Merton's structural model explains the cross-sectional variation documented in Stage A.
 
-**Prerequisite**: Stage A must have found variation (F-test p < 0.10)
+**Prerequisite**: Stage A must have found variation (F-test p < 0.10) OR Stage 0 Path 1-4
 
 **Critical Question**: Does theory explain the variation?
+
+## Stage 0 Integration
+
+Stage B integrates with evolved Stage 0's decision framework:
+
+**Decision Path Handling**:
+- **Path 5 (Theory Fails)**: Stage B is SKIPPED entirely - theory already failed in Stage 0
+- **Path 1-4**: Stage B runs normally to test Merton explanation
+- **Spec B.3**: Already includes sector dummies (ready for Path 2 - Sector Heterogeneity)
+
+**Why This Matters**:
+- Avoids wasted effort if Stage 0 showed theory doesn't work
+- Spec B.3 is already equipped to handle sector-specific effects (Path 2)
+- Consistent with Stage 0's three-pronged validation
+
+**Loading Stage 0 Results**:
+```python
+from dts_research.analysis.stageB import StageBAnalysis
+
+# Load Stage 0 decision path
+stage0_results = StageBAnalysis.load_stage0_results('output')
+
+# Initialize with Stage 0 context
+analyzer = StageBAnalysis(stage0_results=stage0_results)
+
+# Check if should skip
+should_skip, reason = analyzer.should_skip_stage_b()
+if should_skip:
+    print(f"Skipping Stage B: {reason}")
+```
 
 ## What Stage B Does
 

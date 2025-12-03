@@ -9,6 +9,39 @@
 
 **Key Principle**: Parsimony wins. Choose the simplest specification that passes validation.
 
+## Stage 0 Integration
+
+Stage E integrates with evolved Stage 0's decision framework by FILTERING which hierarchical levels are valid:
+
+**Decision Path Handling**:
+- **Path 5 (Theory Fails)**: Only test Level 1 (Standard DTS) and Level 4 (Full Empirical)
+  - Skips Merton-based levels: 2 (Pure Merton), 3 (Calibrated Merton), 5 (Time-varying)
+  - Focuses on purely empirical specifications
+- **Path 1-2**: Tests all levels 1-5 (theory works, full hierarchy valid)
+- **Path 3 (Weak Evidence)**: Tests levels 1, 3, 4 (skips pure Merton Level 2)
+- **Path 4 (Mixed Evidence)**: Tests levels 1, 4 only (empirical focus)
+
+**Why This Matters**:
+- Avoids testing specifications already known to fail from Stage 0
+- Ensures hierarchical testing respects Stage 0's theoretical validation
+- Production spec selection is consistent with fundamental theory assessment
+
+**Loading Stage 0 Results**:
+```python
+from dts_research.analysis.stageE import StageEAnalysis
+
+# Load Stage 0 decision path
+stage0_results = StageEAnalysis.load_stage0_results('output')
+
+# Initialize with Stage 0 context
+analyzer = StageEAnalysis(stage0_results=stage0_results)
+
+# Get valid hierarchy levels
+valid_levels, invalid_reason = analyzer.get_valid_levels()
+print(f"Testing levels: {valid_levels}")
+print(f"Invalid: {invalid_reason}")
+```
+
 ---
 
 ## Theoretical Foundation

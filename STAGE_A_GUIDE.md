@@ -8,6 +8,36 @@ This is a prerequisite before testing whether Merton explains the variation:
 - If **NO variation** → Standard DTS is adequate, stop here
 - If **variation exists** → Proceed to Stage B to test if Merton explains it
 
+## Stage 0 Integration
+
+Stage A now integrates with evolved Stage 0's five-path decision framework:
+
+**Decision Path Handling**:
+- **Path 5 (Theory Fails)**: Stage A is SKIPPED entirely - no point testing Merton if theory already failed
+- **Path 1-2 (Theory Works)**: Stage A can REUSE Stage 0 bucket results for efficiency
+- **Path 3-4**: Stage A runs normally to establish variation
+
+**Why This Matters**:
+- Avoids redundant computation if Stage 0 already established theory fails
+- Reuses bucket-level estimates when appropriate (saves time)
+- Consistent decision framework from Stage 0 through Stage E
+
+**Loading Stage 0 Results**:
+```python
+from dts_research.analysis.stageA import StageAAnalysis
+
+# Load Stage 0 decision path
+stage0_results = StageAAnalysis.load_stage0_results('output')
+
+# Initialize with Stage 0 context
+analyzer = StageAAnalysis(stage0_results=stage0_results)
+
+# Check if should skip
+should_skip, reason = analyzer.should_skip_stage_a()
+if should_skip:
+    print(f"Skipping Stage A: {reason}")
+```
+
 ## What Stage A Does
 
 ### Specification A.1: Bucket-Level Betas

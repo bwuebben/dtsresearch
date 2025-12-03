@@ -6,11 +6,17 @@ Establishes that DTS betas differ across bonds BEFORE testing whether Merton exp
 Two main specifications:
 A.1: Bucket-level betas (discrete characteristics)
 A.2: Continuous characteristics (two-step procedure)
+
+Integration with Stage 0:
+- Can load Stage 0 decision path to guide analysis
+- Can reuse Stage 0 buckets if Decision Path 1 or 2 (efficiency optimization)
 """
 
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
+from pathlib import Path
+import json
 import statsmodels.api as sm
 from statsmodels.regression.linear_model import RegressionResults
 from scipy import stats
@@ -27,12 +33,127 @@ class StageAAnalysis:
     Implements Stage A: Establish Cross-Sectional Variation.
 
     Critical objective: Document that betas differ BEFORE explaining why.
+
+    Integrates with Stage 0 to:
+    - Skip analysis if Path 5 (theory fails)
+    - Reuse buckets if Path 1 or 2 (efficiency)
+    - Adjust interpretation based on Stage 0 findings
     """
 
-    def __init__(self):
+    def __init__(self, stage0_results: Optional[Dict] = None):
+        """
+        Initialize Stage A analysis.
+
+        Args:
+            stage0_results: Optional Stage 0 results dictionary with:
+                - 'decision_path': int (1-5)
+                - 'bucket_results': Stage 0 bucket analysis results
+                - 'sector_effects': Whether sectors matter
+        """
         self.spec_a1_results = None
         self.spec_a2_results = None
         self.bond_specific_betas = None
+        self.stage0_results = stage0_results
+        self.stage0_path = stage0_results.get('decision_path') if stage0_results else None
+
+    # =========================================================================
+    # Stage 0 Integration
+    # =========================================================================
+
+    @staticmethod
+    def load_stage0_results(stage0_dir: str, universe: str = 'IG') -> Dict:
+        """
+        Load Stage 0 results from output directory.
+
+        Args:
+            stage0_dir: Stage 0 output directory path
+            universe: 'IG' or 'HY'
+
+        Returns:
+            Dictionary with Stage 0 results for this universe
+        """
+        stage0_path = Path(stage0_dir)
+
+        # Load summary to get decision path
+        summary_file = stage0_path / 'STAGE_0_SUMMARY.txt'
+        decision_path = None
+        if summary_file.exists():
+            with open(summary_file, 'r') as f:
+                content = f.read()
+                # Parse decision path from summary
+                if universe == 'IG':
+                    for line in content.split('\n'):
+                        if 'Decision Path: Path' in line and 'INVESTMENT GRADE' in content[:content.index(line)]:
+                            decision_path = int(line.split('Path')[1].split('-')[0].strip())
+                            break
+                else:  # HY
+                    hy_section_start = content.find('HIGH YIELD')
+                    if hy_section_start > 0:
+                        hy_content = content[hy_section_start:]
+                        for line in hy_content.split('\n'):
+                            if 'Decision Path: Path' in line:
+                                decision_path = int(line.split('Path')[1].split('-')[0].strip())
+                                break
+
+        # Load bucket results if available
+        bucket_file = stage0_path / 'stage0_tables' / f'table3_bucket_regression_{universe.lower()}.csv'
+        bucket_results = None
+        if bucket_file.exists():
+            bucket_results = pd.read_csv(bucket_file)
+
+        # Load sector effects
+        sector_file = stage0_path / 'stage0_tables' / f'table13_sector_tests_{universe.lower()}.csv'
+        sector_effects = None
+        if sector_file.exists():
+            sector_df = pd.read_csv(sector_file)
+            # Check if joint test rejects null (sectors matter)
+            if 'reject_null' in sector_df.columns:
+                sector_effects = sector_df[sector_df['test'] == 'Joint F-test']['reject_null'].iloc[0] if len(sector_df) > 0 else False
+            elif 'reject_h0' in sector_df.columns:
+                sector_effects = sector_df[sector_df['test'] == 'Joint F-test']['reject_h0'].iloc[0] if len(sector_df) > 0 else False
+
+        return {
+            'decision_path': decision_path,
+            'bucket_results': bucket_results,
+            'sector_effects': sector_effects,
+            'universe': universe
+        }
+
+    def should_skip_stage_a(self) -> Tuple[bool, str]:
+        """
+        Determine if Stage A should be skipped based on Stage 0.
+
+        Returns:
+            (should_skip, reason) tuple
+        """
+        if self.stage0_path is None:
+            return False, "No Stage 0 results available"
+
+        if self.stage0_path == 5:
+            return True, (
+                "Stage 0 Decision Path 5: Theory Fails\n"
+                "Merton model does not adequately describe maturity-spread relationships.\n"
+                "Stage A (testing beta variation) is not applicable when theory fails.\n"
+                "Recommendation: Consider alternative models (reduced-form, rating-based factors)."
+            )
+
+        return False, f"Stage 0 Path {self.stage0_path}: Proceed with Stage A"
+
+    def can_reuse_stage0_buckets(self) -> bool:
+        """
+        Check if Stage 0 buckets can be reused for efficiency.
+
+        Buckets can be reused if:
+        - Stage 0 Path 1 or 2 (theory works)
+        - Bucket results are available
+
+        Returns:
+            True if buckets can be reused
+        """
+        if self.stage0_path in [1, 2] and self.stage0_results:
+            bucket_results = self.stage0_results.get('bucket_results')
+            return bucket_results is not None and len(bucket_results) > 0
+        return False
 
     # =========================================================================
     # Specification A.1: Bucket-Level Betas
@@ -571,6 +692,8 @@ class StageAAnalysis:
         """
         Generate Stage A decision recommendation.
 
+        Integrates with Stage 0 decision path to provide context.
+
         Args:
             overall_test: Overall F-test results
             econ_significance: Economic significance metrics
@@ -582,16 +705,25 @@ class StageAAnalysis:
         p_value = overall_test['p_value']
         r2 = a2_results.get('combined', {}).get('r_squared', 0)
 
+        # Add Stage 0 context if available
+        stage0_context = ""
+        if self.stage0_path:
+            stage0_context = f"\n[Stage 0 Context: Decision Path {self.stage0_path}]\n"
+
         if p_value > 0.10 and r2 < 0.05:
-            return (
+            decision = (
                 "❌ STOP HERE - NO SIGNIFICANT VARIATION\n"
                 f"F-test p-value = {p_value:.3f} (> 0.10)\n"
                 f"R² = {r2:.3f} (< 0.05)\n"
                 "Standard DTS is adequate. No need for adjustments.\n"
                 "Report this as primary finding."
             )
+            if self.stage0_path in [1, 2]:
+                decision += "\n✓ Consistent with Stage 0: Theory works, no cross-sectional adjustment needed."
+            return stage0_context + decision
+
         elif p_value < 0.01 and r2 > 0.15:
-            return (
+            decision = (
                 "✓ STRONG VARIATION - PROCEED TO STAGE B\n"
                 f"F-test p-value < 0.001 (highly significant)\n"
                 f"R² = {r2:.3f} (> 0.15)\n"
@@ -599,16 +731,29 @@ class StageAAnalysis:
                 f"({econ_significance['ratio_max_min']:.1f}x variation)\n"
                 "Systematic variation exists. Proceed to Stage B to test if Merton explains it."
             )
+            if self.stage0_path == 2:
+                decision += "\n✓ Consistent with Stage 0 Path 2: Variation exists, sectors may matter."
+            elif self.stage0_path in [3, 4]:
+                decision += "\n⚠ Stage 0 showed weak/mixed evidence, but Stage A finds strong variation."
+            return stage0_context + decision
+
         elif 0.01 <= p_value < 0.10:
-            return (
+            decision = (
                 "⚠ MARGINAL VARIATION - PROCEED WITH CAUTION\n"
                 f"F-test p-value = {p_value:.3f} (0.01 < p < 0.10)\n"
                 f"R² = {r2:.3f}\n"
                 "Some evidence of variation. Proceed to Stage B but theory may suffice."
             )
+            if self.stage0_path == 3:
+                decision += "\n✓ Consistent with Stage 0 Path 3: Weak but present evidence."
+            return stage0_context + decision
+
         else:
-            return (
+            decision = (
                 "✓ PROCEED TO STAGE B\n"
                 "Variation exists but magnitude uncertain. "
                 "Stage B will determine if Merton provides adequate explanation."
             )
+            if self.stage0_path == 4:
+                decision += "\n✓ Consistent with Stage 0 Path 4: Mixed evidence, selective use recommended."
+            return stage0_context + decision

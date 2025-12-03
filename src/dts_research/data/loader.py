@@ -1,25 +1,43 @@
 """
 Data loading module with database connectivity and mock data generation.
+
+Updated to include fields needed for evolved Stage 0:
+- ultimate_parent_id: Ultimate parent company ID
+- BCLASS3/BCLASS4: Bloomberg industry classification
+- seniority: Bond seniority (Senior/Subordinated)
 """
 
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
+from ..config import (
+    BLOOMBERG_CLASS_LEVEL,
+    MOCK_N_BONDS,
+    MOCK_N_ISSUERS,
+    MOCK_SECTOR_DISTRIBUTION,
+    MOCK_RATING_DISTRIBUTION
+)
 
 
 class BondDataLoader:
     """
     Loads bond data from database or generates mock data for testing.
 
-    Expected database schema:
+    Expected database schema (evolved for Stage 0):
     - bond_id: unique identifier
     - date: observation date
     - oas: option-adjusted spread (bps)
     - rating: credit rating
     - maturity_date: bond maturity date
-    - sector: Bloomberg Class 3 sector
-    - issuer_id: issuer identifier
+    - ultimate_parent_id: ultimate parent company identifier
+    - sector_classification: Bloomberg BCLASS3 or BCLASS4 value
+    - seniority: bond seniority (Senior/Subordinated)
+    - security_type: security type (Corp/MTN/Note/Bond/Debenture)
+
+    Note: The sector_classification field will be mapped to research sectors
+    (Industrial/Financial/Utility/Energy) using the SectorClassifier module.
+    The issuer_id will be created as a composite of ultimate_parent_id + seniority.
     """
 
     def __init__(self, connection_string: Optional[str] = None):
@@ -55,11 +73,13 @@ class BondDataLoader:
 
         Returns:
             DataFrame with columns: bond_id, date, oas, rating, maturity_date,
-            sector, issuer_id
+            ultimate_parent_id, BCLASS3 (or BCLASS4), seniority, security_type
         """
         if query is None:
             # TODO: User fills in SQL query
-            query = """
+            # Configure BCLASS level in config.py (BLOOMBERG_CLASS_LEVEL)
+            bclass_field = BLOOMBERG_CLASS_LEVEL  # 'BCLASS3' or 'BCLASS4'
+            query = f"""
             -- User should customize this query based on their database schema
             SELECT
                 bond_id,
@@ -67,8 +87,10 @@ class BondDataLoader:
                 oas,
                 rating,
                 maturity_date,
-                sector,
-                issuer_id
+                ultimate_parent_id,
+                {bclass_field} as sector_classification,
+                seniority,
+                security_type
             FROM bond_table
             WHERE date BETWEEN %(start_date)s AND %(end_date)s
             """
@@ -85,22 +107,30 @@ class BondDataLoader:
         self,
         start_date: str,
         end_date: str,
-        n_bonds: int = 500,
+        n_bonds: int = None,
         seed: int = 42
     ) -> pd.DataFrame:
         """
-        Generate realistic mock bond data for testing.
+        Generate realistic mock bond data for testing with new Stage 0 fields.
+
+        Creates multi-bond issuers with realistic maturity dispersion to enable
+        within-issuer analysis.
 
         Args:
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
-            n_bonds: Number of bonds to generate
+            n_bonds: Number of bonds (if None, uses MOCK_N_BONDS from config)
             seed: Random seed for reproducibility
 
         Returns:
-            DataFrame with mock bond data
+            DataFrame with mock bond data including:
+            - bond_id, date, oas, rating, maturity_date, time_to_maturity
+            - ultimate_parent_id, sector_classification (BCLASS3), seniority, security_type
         """
         np.random.seed(seed)
+
+        if n_bonds is None:
+            n_bonds = MOCK_N_BONDS
 
         # Date range (weekly observations)
         start = pd.to_datetime(start_date)
@@ -113,41 +143,101 @@ class BondDataLoader:
         hy_ratings = ['BB', 'B', 'CCC']
         all_ratings = ig_ratings + hy_ratings
 
-        # Define sectors
-        sectors = ['Industrial', 'Financial', 'Utility', 'Technology']
+        # Sample BCLASS3 values for sectors
+        bclass3_by_sector = {
+            'Industrial': ['INDUSTRIAL', 'MANUFACTURING', 'CONSUMER', 'TECHNOLOGY', 'TELECOM'],
+            'Financial': ['BANKING', 'INSURANCE', 'FINANCIAL_SERVICES', 'REITS', 'BROKER_DEALER'],
+            'Utility': ['ELECTRIC', 'GAS_DISTRIBUTION', 'WATER', 'INDEPENDENT_POWER'],
+            'Energy': ['OIL_GAS_PROD', 'OIL_REFINING', 'COAL', 'OIL_SERVICES']
+        }
 
-        # Generate bond characteristics
-        bonds = []
-        for i in range(n_bonds):
-            rating = np.random.choice(all_ratings, p=[0.05, 0.15, 0.25, 0.25, 0.15, 0.10, 0.05])
-            sector = np.random.choice(sectors)
+        # Security types
+        security_types = ['Corp', 'MTN', 'Note', 'Bond', 'Debenture']
 
-            # Maturity between 1 and 15 years from start_date
-            years_to_maturity = np.random.uniform(1, 15)
-            maturity_date = start + timedelta(days=int(years_to_maturity * 365))
+        # Create issuers first (from config)
+        n_issuers = MOCK_N_ISSUERS
+        issuers = []
 
-            # Base spread depends on rating
-            if rating in ['AAA', 'AA']:
-                base_spread = np.random.uniform(50, 150)
-            elif rating == 'A':
-                base_spread = np.random.uniform(100, 200)
-            elif rating == 'BBB':
-                base_spread = np.random.uniform(150, 300)
-            elif rating == 'BB':
-                base_spread = np.random.uniform(300, 500)
-            elif rating == 'B':
-                base_spread = np.random.uniform(500, 800)
-            else:  # CCC
-                base_spread = np.random.uniform(800, 1500)
+        for i in range(n_issuers):
+            # Sample sector based on distribution
+            sector = np.random.choice(
+                list(MOCK_SECTOR_DISTRIBUTION.keys()),
+                p=list(MOCK_SECTOR_DISTRIBUTION.values())
+            )
 
-            bonds.append({
-                'bond_id': f'BOND_{i:04d}',
-                'rating': rating,
+            # Sample rating based on distribution
+            rating = np.random.choice(
+                list(MOCK_RATING_DISTRIBUTION.keys()),
+                p=list(MOCK_RATING_DISTRIBUTION.values())
+            )
+
+            # Sample BCLASS3 value for this sector
+            bclass3 = np.random.choice(bclass3_by_sector[sector])
+
+            issuers.append({
+                'ultimate_parent_id': f'PARENT_{i:04d}',
                 'sector': sector,
-                'maturity_date': maturity_date,
-                'base_spread': base_spread,
-                'issuer_id': f'ISSUER_{i // 5:03d}'  # ~5 bonds per issuer
+                'bclass3': bclass3,
+                'rating': rating
             })
+
+        # Generate bonds from issuers
+        # Each issuer has 2-5 bonds with different maturities and seniorities
+        bonds = []
+        bond_counter = 0
+
+        for issuer in issuers:
+            # Number of bonds for this issuer (2-5 to enable within-issuer analysis)
+            n_bonds_issuer = np.random.randint(2, 6)
+
+            # Base spread for this issuer (depends on rating)
+            rating = issuer['rating']
+            if rating in ['AAA', 'AA']:
+                issuer_base_spread = np.random.uniform(50, 150)
+            elif rating == 'A':
+                issuer_base_spread = np.random.uniform(100, 200)
+            elif rating == 'BBB':
+                issuer_base_spread = np.random.uniform(150, 300)
+            elif rating == 'BB':
+                issuer_base_spread = np.random.uniform(300, 500)
+            elif rating == 'B':
+                issuer_base_spread = np.random.uniform(500, 800)
+            else:  # CCC
+                issuer_base_spread = np.random.uniform(800, 1500)
+
+            for _ in range(n_bonds_issuer):
+                if bond_counter >= n_bonds:
+                    break
+
+                # Seniority: 80% Senior, 20% Subordinated
+                seniority = np.random.choice(['Senior', 'Subordinated'], p=[0.8, 0.2])
+
+                # Subordinated bonds have higher spread
+                seniority_premium = 1.3 if seniority == 'Subordinated' else 1.0
+
+                # Maturity between 1 and 15 years, ensuring dispersion within issuer
+                years_to_maturity = np.random.uniform(1, 15)
+                maturity_date = start + timedelta(days=int(years_to_maturity * 365))
+
+                # Security type
+                security_type = np.random.choice(security_types)
+
+                bonds.append({
+                    'bond_id': f'BOND_{bond_counter:05d}',
+                    'ultimate_parent_id': issuer['ultimate_parent_id'],
+                    'rating': rating,
+                    'sector': issuer['sector'],
+                    'sector_classification': issuer['bclass3'],
+                    'seniority': seniority,
+                    'security_type': security_type,
+                    'maturity_date': maturity_date,
+                    'base_spread': issuer_base_spread * seniority_premium
+                })
+
+                bond_counter += 1
+
+            if bond_counter >= n_bonds:
+                break
 
         # Generate time series data
         records = []
@@ -186,7 +276,10 @@ class BondDataLoader:
                         'maturity_date': bond['maturity_date'],
                         'time_to_maturity': ttm,
                         'sector': bond['sector'],
-                        'issuer_id': bond['issuer_id']
+                        'sector_classification': bond['sector_classification'],
+                        'ultimate_parent_id': bond['ultimate_parent_id'],
+                        'seniority': bond['seniority'],
+                        'security_type': bond['security_type']
                     })
 
         df = pd.DataFrame(records)

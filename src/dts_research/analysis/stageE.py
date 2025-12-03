@@ -6,6 +6,11 @@ production model that balances theoretical coherence, empirical fit, and
 implementation cost.
 
 Key principle: Stop at the simplest adequate model. Don't over-engineer.
+
+Integration with Stage 0:
+- Path 5: Do NOT use Merton-based specs (Levels 2, 3, 5 invalid)
+- Path 1-2: Merton-based specs are valid
+- Guides starting point in hierarchy
 """
 
 import pandas as pd
@@ -23,14 +28,59 @@ class StageEAnalysis:
 
     Implements 5 levels:
     - Level 1: Standard DTS (no adjustments)
-    - Level 2: Pure Merton (lookup tables)
-    - Level 3: Calibrated Merton (2 parameters)
+    - Level 2: Pure Merton (lookup tables) - SKIP if Stage 0 Path 5
+    - Level 3: Calibrated Merton (2 parameters) - SKIP if Stage 0 Path 5
     - Level 4: Full Empirical (8-12 parameters)
-    - Level 5: Time-varying (base + 2 macro parameters)
+    - Level 5: Time-varying (base + 2 macro parameters) - SKIP if Stage 0 Path 5
+
+    Integrates with Stage 0 to exclude Merton-based specs if theory fails.
     """
 
-    def __init__(self):
+    def __init__(self, stage0_results: Optional[Dict] = None):
+        """
+        Initialize Stage E analysis.
+
+        Args:
+            stage0_results: Optional Stage 0 results dictionary
+        """
         self.results = {}
+        self.stage0_results = stage0_results
+        self.stage0_path = stage0_results.get('decision_path') if stage0_results else None
+
+    def get_valid_levels(self) -> Tuple[List[int], str]:
+        """
+        Determine which hierarchy levels are valid based on Stage 0.
+
+        Returns:
+            (valid_levels, reason) tuple
+        """
+        if self.stage0_path is None:
+            return [1, 2, 3, 4, 5], "No Stage 0 results - test all levels"
+
+        if self.stage0_path == 5:
+            return [1, 4], (
+                "Stage 0 Path 5: Theory Fails\n"
+                "INVALID levels: 2 (Pure Merton), 3 (Calibrated Merton), 5 (Time-varying Merton)\n"
+                "VALID levels: 1 (Standard DTS), 4 (Full Empirical)\n"
+                "Recommendation: Use Level 4 (empirical) or Level 1 (simplest)"
+            )
+
+        if self.stage0_path in [1, 2]:
+            return [1, 2, 3, 4, 5], f"Stage 0 Path {self.stage0_path}: Theory works - all levels valid"
+
+        if self.stage0_path == 3:
+            return [1, 3, 4], (
+                f"Stage 0 Path 3: Weak Evidence\n"
+                "Skip Level 2 (pure Merton), use calibrated (3) or empirical (4)"
+            )
+
+        if self.stage0_path == 4:
+            return [1, 4], (
+                f"Stage 0 Path 4: Mixed Evidence\n"
+                "Skip Merton-based levels, use empirical (4) or standard (1)"
+            )
+
+        return [1, 2, 3, 4, 5], "Default: test all levels"
 
     def hierarchical_testing(
         self,

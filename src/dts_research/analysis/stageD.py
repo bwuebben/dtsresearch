@@ -2,6 +2,10 @@
 Stage D analysis: Robustness and Extensions.
 
 Implements quantile regression, shock decomposition, and liquidity adjustment.
+
+Integration with Stage 0:
+- Skips theory-driven tests if Path 5 (theory fails)
+- Focuses on model-free robustness for Path 5
 """
 
 import numpy as np
@@ -21,12 +25,40 @@ class StageDAnalysis:
     1. Tail events (quantile regression)
     2. Shock types (systematic vs idiosyncratic)
     3. Spread components (default vs liquidity)
+
+    Integrates with Stage 0 to focus on model-free robustness if theory fails.
     """
 
-    def __init__(self):
-        """Initialize Stage D analysis."""
+    def __init__(self, stage0_results: Optional[Dict] = None):
+        """
+        Initialize Stage D analysis.
+
+        Args:
+            stage0_results: Optional Stage 0 results dictionary
+        """
         from ..models.merton import MertonLambdaCalculator
         self.merton_calc = MertonLambdaCalculator()
+        self.stage0_results = stage0_results
+        self.stage0_path = stage0_results.get('decision_path') if stage0_results else None
+
+    def should_focus_model_free(self) -> Tuple[bool, str]:
+        """
+        Determine if Stage D should focus on model-free robustness.
+
+        Returns:
+            (focus_model_free, reason) tuple
+        """
+        if self.stage0_path is None:
+            return False, "No Stage 0 results available"
+
+        if self.stage0_path == 5:
+            return True, (
+                "Stage 0 Decision Path 5: Theory Fails\n"
+                "Stage D should focus on model-free robustness checks.\n"
+                "Skip Merton-specific tests, emphasize quantile regression and shock decomposition."
+            )
+
+        return False, f"Stage 0 Path {self.stage0_path}: Run full Stage D (theory + robustness)"
 
     # =========================================================================
     # D.1: TAIL BEHAVIOR (QUANTILE REGRESSION)
