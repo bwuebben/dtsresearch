@@ -30,6 +30,8 @@ from dts_research.analysis.stageB import StageBAnalysis
 from dts_research.analysis.stageC import StageCAnalysis
 from dts_research.visualization.stageC_plots import StageCVisualizer
 from dts_research.utils.reportingC import StageCReporter
+from dts_research.data.sector_classification import SectorClassifier
+from dts_research.data.issuer_identification import add_issuer_identification
 
 
 def generate_mock_macro_data(start_date: str, end_date: str) -> pd.DataFrame:
@@ -137,6 +139,20 @@ def main():
     print("  Running prerequisite analyses (Stage 0 + Stage B)...")
     classifier = BucketClassifier()
     bond_data = classifier.classify_bonds(bond_data)
+
+    # Add sector classification and issuer identification (required for Stage 0 evolved specs)
+    print("  Adding sector classification...")
+    sector_classifier = SectorClassifier()
+    bond_data = sector_classifier.classify_sector(bond_data, bclass_column='sector_classification')
+    bond_data = sector_classifier.add_sector_dummies(bond_data)
+
+    print("  Adding issuer identification...")
+    bond_data = add_issuer_identification(
+        bond_data,
+        parent_id_col='ultimate_parent_id',
+        seniority_col='seniority'
+    )
+
     bucket_stats = classifier.compute_bucket_characteristics(bond_data)
 
     stage0 = Stage0Analysis()

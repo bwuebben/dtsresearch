@@ -25,6 +25,8 @@ from dts_research.analysis.stage0 import Stage0Analysis
 from dts_research.analysis.stageA import StageAAnalysis
 from dts_research.visualization.stageA_plots import StageAVisualizer
 from dts_research.utils.reportingA import StageAReporter
+from dts_research.data.sector_classification import SectorClassifier
+from dts_research.data.issuer_identification import add_issuer_identification
 
 
 def main():
@@ -76,6 +78,20 @@ def main():
     print("  Classifying bonds into buckets...")
     classifier = BucketClassifier()
     bond_data = classifier.classify_bonds(bond_data)
+
+    # Add sector classification and issuer identification (required for Stage 0 evolved specs)
+    print("  Adding sector classification...")
+    sector_classifier = SectorClassifier()
+    bond_data = sector_classifier.classify_sector(bond_data, bclass_column='sector_classification')
+    bond_data = sector_classifier.add_sector_dummies(bond_data)
+
+    print("  Adding issuer identification...")
+    bond_data = add_issuer_identification(
+        bond_data,
+        parent_id_col='ultimate_parent_id',
+        seniority_col='seniority'
+    )
+
     bucket_stats = classifier.compute_bucket_characteristics(bond_data, min_observations=50)
     print(f"  Created {len(bucket_stats)} buckets")
     print()

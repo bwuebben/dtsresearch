@@ -31,6 +31,8 @@ from dts_research.analysis.stage0 import Stage0Analysis
 from dts_research.analysis.stageE import StageEAnalysis
 from dts_research.visualization.stageE_plots import StageEVisualizer
 from dts_research.utils.reportingE import StageEReporter
+from dts_research.data.sector_classification import SectorClassifier
+from dts_research.data.issuer_identification import add_issuer_identification
 
 
 def load_prerequisite_results():
@@ -144,6 +146,19 @@ def main():
     print("  Preparing regression data...")
     classifier = BucketClassifier()
     bond_data = classifier.classify_bonds(bond_data)
+
+    # Add sector classification and issuer identification (required for Stage 0 evolved specs)
+    print("  Adding sector classification...")
+    sector_classifier = SectorClassifier()
+    bond_data = sector_classifier.classify_sector(bond_data, bclass_column='sector_classification')
+    bond_data = sector_classifier.add_sector_dummies(bond_data)
+
+    print("  Adding issuer identification...")
+    bond_data = add_issuer_identification(
+        bond_data,
+        parent_id_col='ultimate_parent_id',
+        seniority_col='seniority'
+    )
 
     stage0 = Stage0Analysis()
     regression_data = stage0.prepare_regression_data(bond_data, index_data)
