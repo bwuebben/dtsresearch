@@ -2,13 +2,16 @@
 
 ## Overview
 
-This project implements a multi-stage empirical research program using a modular, extensible architecture. The design emphasizes:
+This project implements a complete multi-stage empirical research program (Stages 0-E) using a modular, extensible architecture. The design emphasizes:
 
 1. **Separation of concerns** - data, models, analysis, visualization
 2. **Theory-guided implementation** - Merton structural model as foundation
 3. **Database agnosticism** - easy to adapt to any SQL database
 4. **Testability** - mock data generation for development
 5. **Reproducibility** - clear pipeline from data to results
+6. **Extensibility** - Each stage builds on previous foundations
+
+**Implementation Status**: ALL 6 STAGES COMPLETE (0, A, B, C, D, E)
 
 ## Module Structure
 
@@ -117,46 +120,94 @@ where:
 - OLS estimation via statsmodels
 ```
 
+#### 3.3 Stage A-E Analysis Modules
+
+**Stage A** (`stageA.py` - ~770 lines):
+- Spec A.1: Bucket-level betas with F-tests for equality
+- Spec A.2: Continuous characteristics with rolling windows
+- Decision: Proceed if variation exists (F-test p < 0.10)
+
+**Stage B** (`stageB.py` - ~830 lines):
+- Spec B.1: Merton as offset (constrained β=1)
+- Spec B.2: Decomposed components (β_T, β_s)
+- Spec B.3: Unrestricted empirical model
+- Decision: 4 paths based on theory fit
+
+**Stage C** (`stageC.py` - ~780 lines):
+- Rolling window stability tests (Chow test)
+- Macro driver analysis (VIX, OAS interaction)
+- Maturity-specific time-variation
+- Decision: Static vs time-varying needed
+
+**Stage D** (`stageD.py` - ~870 lines):
+- D.1: Tail behavior (quantile regression)
+- D.2: Shock decomposition (global, sector, issuer)
+- D.3: Liquidity adjustment (default + liquidity)
+- Production recommendations for each extension
+
+**Stage E** (`stageE.py` - ~810 lines):
+- Hierarchical testing framework (5 levels)
+- Out-of-sample validation (rolling windows)
+- Performance by regime (Normal/Stress/Crisis)
+- Production blueprint generation
+
+**Common patterns across all stages**:
+- Use Stage0's `prepare_regression_data()` as foundation
+- Cluster standard errors (by week or issuer)
+- Statistical tests with clear decision criteria
+- Integration with visualization and reporting modules
+
 ### 4. Visualization Layer (`src/dts_research/visualization/`)
 
-**Purpose**: Generate publication-quality figures
+**Purpose**: Generate publication-quality figures for all stages
 
-**Key class**: `Stage0Visualizer`
+**Visualizer classes**:
+- `Stage0Visualizer` (~280 lines): 3 figures for raw validation
+- `StageAVisualizer` (~390 lines): 3 figures for cross-sectional variation
+- `StageBVisualizer` (~530 lines): 4 figures for Merton explanation
+- `StageCVisualizer` (~580 lines): 4 figures for stability/time-variation
+- `StageDVisualizer` (~530 lines): 4 figures for robustness extensions
+- `StageEVisualizer` (~510 lines): 4 figures for production selection
 
-**Figures**:
-1. **Figure 0.1**: Scatter (β vs λ) with 45° line
-2. **Figure 0.2**: Cross-maturity patterns (6 panels by rating)
-3. **Figure 0.3**: Regime patterns (dispersion vs spread)
+**Total**: 23 publication-quality figures across all stages
 
-**Design features**:
+**Common design features**:
 - Seaborn styling for consistency
 - Color coding by spread regime (IG/HY/Distressed)
 - Point sizes proportional to sample size
-- Outlier annotation
+- Outlier annotation where relevant
 - 300 DPI for publication quality
+- Crisis period shading (2008-2009, 2020)
+- Consistent color palettes across stages
 
 ### 5. Utilities Layer (`src/dts_research/utils/`)
 
-**Purpose**: Reporting and output
+**Purpose**: Reporting and output for all stages
 
-**Key class**: `Stage0Reporter`
+**Reporter classes**:
+- `Stage0Reporter` (~370 lines): 4 tables + 2-3 page summary
+- `StageAReporter` (~360 lines): 3+ tables + 2 page summary
+- `StageBReporter` (~570 lines): 4 tables + 3-4 page summary
+- `StageCReporter` (~520 lines): 3+ tables + 3-4 page summary
+- `StageDReporter` (~700 lines): 7 tables + 3-4 page summary
+- `StageEReporter` (~780 lines): 4+ tables + 5-7 page implementation blueprint
 
-**Deliverables**:
-- **Table 0.1**: Bucket-level results (top N by sample size)
-- **Table 0.2**: Cross-maturity patterns (pivot table)
-- **Written summary**: 2-3 page report with 5 sections
-- **Full results CSV**: Complete output
+**Total**: 24+ tables + 6 written summaries + 1 implementation blueprint
 
-**Report structure**:
-```
+**Common report structure**:
 1. Executive summary with decision
-2. Aggregate level test results
-3. Cross-maturity pattern analysis
-4. Regime pattern analysis
-5. Outlier identification
-6. Practical implications
-7. Next steps
-```
+2. Statistical test results
+3. Model comparison (where applicable)
+4. Detailed analysis tables
+5. Practical implications
+6. Next steps
+
+**Stage E blueprint** (production deployment):
+- Algorithmic steps and pseudo-code
+- Recalibration protocols
+- Edge case handling
+- Performance monitoring framework
+- Economic value examples
 
 ## Data Flow
 
@@ -223,32 +274,37 @@ Statistical tests
 Results DataFrame
 ```
 
-## Extension Points
+## Complete Stage Implementation
 
-### Adding New Stages
+### All Stages Now Complete
 
-To implement Stage A, B, etc.:
+**Stages 0-E** are fully implemented following consistent architecture:
 
-1. Create `src/dts_research/analysis/stageA.py`
-2. Define new analysis class (follow `Stage0Analysis` pattern)
-3. Create visualizer in `src/dts_research/visualization/`
-4. Create reporter in `src/dts_research/utils/`
-5. Add orchestration script `run_stageA.py`
+**Each stage includes**:
+1. Analysis module: `src/dts_research/analysis/stage*.py`
+2. Visualizer: `src/dts_research/visualization/stage*_plots.py`
+3. Reporter: `src/dts_research/utils/reporting*.py`
+4. Orchestration script: `run_stage*.py`
+5. Documentation: `STAGE_*_GUIDE.md` and `STAGE_*_COMPLETE.md`
 
-**Example**:
+**Common patterns across all stages**:
 ```python
-class StageAAnalysis:
+class Stage*Analysis:
     def __init__(self):
         self.results = None
 
-    def run_issuer_week_regression(self, df):
-        # Implement issuer-week fixed effects
+    def main_analysis_method(self, df, prerequisites):
+        # Core analysis logic
+        # Statistical tests
+        # Return structured results dict
         pass
 
-    def test_cross_sectional_variation(self, results):
-        # Statistical tests
+    def _helper_methods(self):
+        # Internal computation
         pass
 ```
+
+### Extension Points for Future Research
 
 ### Adding New Models
 
@@ -315,7 +371,15 @@ pytest tests/ -v --cov=src/dts_research
 
 Run complete pipeline with mock data:
 ```bash
-python run_stage0.py  # Should complete in ~10 seconds
+python run_stage0.py  # ~10 seconds
+python run_stageA.py  # ~15 seconds (without Spec A.2)
+python run_stageB.py  # ~20 seconds
+python run_stageC.py  # ~25-30 seconds
+python run_stageD.py  # ~30-40 seconds
+python run_stageE.py  # ~45-60 seconds
+
+# Or run all sequentially
+for script in run_stage*.py; do python $script; done  # ~150-190 seconds total
 ```
 
 ### Validation Checks

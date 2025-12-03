@@ -89,6 +89,10 @@ def main():
     bond_data = classifier.classify_bonds(bond_data)
     bucket_stats = classifier.compute_bucket_characteristics(bond_data)
 
+    # Debug: Check bucket_stats columns
+    print(f"  Bucket stats columns: {list(bucket_stats.columns)}")
+    print(f"  Bucket stats shape: {bucket_stats.shape}")
+
     stage0 = Stage0Analysis()
     regression_data = stage0.prepare_regression_data(bond_data, index_data)
 

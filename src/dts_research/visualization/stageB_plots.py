@@ -45,14 +45,24 @@ class StageBVisualizer:
 
         # Classify regimes based on spread and maturity range
         def classify_regime(row):
-            spread = row['median_spread']
-            # Rough maturity range classification
-            if spread < 300:
-                return 'IG'
-            elif spread < 1000:
-                return 'HY'
+            # Use median_spread if available, otherwise use rating as proxy
+            if 'median_spread' in row.index and pd.notna(row['median_spread']):
+                spread = row['median_spread']
+                if spread < 300:
+                    return 'IG'
+                elif spread < 1000:
+                    return 'HY'
+                else:
+                    return 'Distressed'
             else:
-                return 'Distressed'
+                # Fallback: classify by rating_bucket
+                rating = row.get('rating_bucket', '')
+                if rating in ['AAA/AA', 'A', 'BBB']:
+                    return 'IG'
+                elif rating in ['BB', 'B']:
+                    return 'HY'
+                else:
+                    return 'Distressed'
 
         theory_vs_reality['regime'] = theory_vs_reality.apply(classify_regime, axis=1)
 
@@ -159,28 +169,37 @@ class StageBVisualizer:
         # Panel B: By Spread Level
         ax = axes[1]
 
-        # Bin spreads
-        spread_bins = [0, 100, 200, 300, 500, 1000, 3000]
-        spread_labels = ['<100', '100-200', '200-300', '300-500', '500-1000', '>1000']
+        # Bin spreads (if median_spread available)
+        if 'median_spread' in theory_vs_reality.columns:
+            spread_bins = [0, 100, 200, 300, 500, 1000, 3000]
+            spread_labels = ['<100', '100-200', '200-300', '300-500', '500-1000', '>1000']
 
-        theory_vs_reality['spread_bin'] = pd.cut(
-            theory_vs_reality['median_spread'],
-            bins=spread_bins,
-            labels=spread_labels
-        )
+            theory_vs_reality['spread_bin'] = pd.cut(
+                theory_vs_reality['median_spread'],
+                bins=spread_bins,
+                labels=spread_labels
+            )
 
-        spread_data = []
-        bin_labels = []
-        for label in spread_labels:
-            data = theory_vs_reality[theory_vs_reality['spread_bin'] == label]['deviation']
-            if len(data) > 0:
-                spread_data.append(data)
-                bin_labels.append(label)
+            spread_data = []
+            bin_labels = []
+            for label in spread_labels:
+                data = theory_vs_reality[theory_vs_reality['spread_bin'] == label]['deviation']
+                if len(data) > 0:
+                    spread_data.append(data)
+                    bin_labels.append(label)
 
-        if spread_data:
-            bp = ax.boxplot(spread_data, labels=bin_labels, patch_artist=True)
-            for patch in bp['boxes']:
-                patch.set_facecolor('lightgreen')
+            if spread_data:
+                bp = ax.boxplot(spread_data, labels=bin_labels, patch_artist=True)
+                for patch in bp['boxes']:
+                    patch.set_facecolor('lightgreen')
+        else:
+            # Fallback: use regime instead
+            bin_labels = []  # Initialize for later use
+            for regime in ['IG', 'HY', 'Distressed']:
+                data = theory_vs_reality[theory_vs_reality['regime'] == regime]['deviation']
+                if len(data) > 0:
+                    ax.boxplot([data], labels=[regime], patch_artist=True)
+                    bin_labels.append(regime)
 
         ax.axhline(0, color='red', linestyle='--', linewidth=2, label='Perfect prediction')
         ax.set_xlabel('Spread Level (bps)', fontsize=11, fontweight='bold')
@@ -188,7 +207,8 @@ class StageBVisualizer:
         ax.set_title('Panel B: By Spread Level', fontsize=12, fontweight='bold')
         ax.legend()
         ax.grid(True, alpha=0.3, axis='y')
-        ax.set_xticklabels(bin_labels, rotation=45, ha='right')
+        if bin_labels:  # Only set xticklabels if we have labels
+            ax.set_xticklabels(bin_labels, rotation=45, ha='right')
 
         # Panel C: By Sector
         ax = axes[2]

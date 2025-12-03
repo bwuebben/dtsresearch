@@ -502,8 +502,15 @@ class StageBAnalysis:
             DataFrame with comparison
         """
         # Merge Stage A betas with bucket stats
+        # Select only columns that exist in bucket_stats
+        bucket_cols = ['bucket_id', 'lambda_merton']
+        if 'median_maturity' in bucket_stats.columns:
+            bucket_cols.append('median_maturity')
+        if 'median_spread' in bucket_stats.columns:
+            bucket_cols.append('median_spread')
+
         comparison = stage_a_results.merge(
-            bucket_stats[['bucket_id', 'lambda_merton', 'median_maturity', 'median_spread']],
+            bucket_stats[bucket_cols],
             on='bucket_id',
             how='inner'
         )
@@ -520,11 +527,18 @@ class StageBAnalysis:
         # Sort by deviation
         comparison = comparison.sort_values('abs_deviation', ascending=False)
 
-        return comparison[[
+        # Return only columns that exist
+        return_cols = [
             'bucket_id', 'rating_bucket', 'maturity_bucket', 'sector',
             'beta', 'lambda_merton', 'ratio', 'deviation', 'pct_deviation',
-            'outlier', 'median_maturity', 'median_spread', 'n_observations'
-        ]]
+            'outlier', 'n_observations'
+        ]
+        if 'median_maturity' in comparison.columns:
+            return_cols.insert(-1, 'median_maturity')
+        if 'median_spread' in comparison.columns:
+            return_cols.insert(-1, 'median_spread')
+
+        return comparison[return_cols]
 
     def assess_theory_performance(self, theory_vs_reality: pd.DataFrame) -> Dict:
         """

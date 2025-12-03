@@ -139,7 +139,7 @@ class StageBReporter:
             'Ratio (β/λ)': table['ratio'].apply(lambda x: f"{x:.3f}"),
             'Deviation': table['deviation'].apply(lambda x: f"{x:+.3f}"),
             '% Dev': table['pct_deviation'].apply(lambda x: f"{x:+.1f}%"),
-            'Outlier?': table['outlier'].map({True: '***', False: ''}),'
+            'Outlier?': table['outlier'].map({True: '***', False: ''}),
             'N': table['n_observations'].astype(int)
         })
 

@@ -81,7 +81,8 @@ class StageAReporter:
         )
 
         # Format as: β (se) [n]
-        formatted = beta_pivot.copy()
+        # Use object dtype to avoid FutureWarning about incompatible dtypes
+        formatted = pd.DataFrame(index=beta_pivot.index, columns=beta_pivot.columns, dtype=object)
         for idx in formatted.index:
             for col in formatted.columns:
                 beta = beta_pivot.loc[idx, col]
@@ -117,6 +118,10 @@ class StageAReporter:
             test_type = test.get('test', 'Unknown')
             dimension = test.get('dimension', 'Overall')
             fixed = test.get('fixed_values', {})
+
+            # Handle None case for fixed_values
+            if fixed is None:
+                fixed = {}
 
             # Format test description
             if dimension == 'Overall':

@@ -15,6 +15,11 @@ import statsmodels.api as sm
 from statsmodels.regression.linear_model import RegressionResults
 from scipy import stats
 from itertools import combinations
+import warnings
+
+# Suppress specific warnings from rolling window regressions with small samples
+warnings.filterwarnings('ignore', message='invalid value encountered in scalar divide')
+warnings.filterwarnings('ignore', category=RuntimeWarning, module='statsmodels')
 
 
 class StageAAnalysis:

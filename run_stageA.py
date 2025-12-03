@@ -44,7 +44,7 @@ def main():
     start_date = '2010-01-01'
     end_date = '2024-12-31'
     use_mock_data = True
-    run_spec_a2 = True  # Set to False to skip time-intensive Step 2
+    run_spec_a2 = False  # Set to True to run time-intensive rolling window estimation (~30-40 min)
 
     # Create output directories
     os.makedirs('output/figures', exist_ok=True)
