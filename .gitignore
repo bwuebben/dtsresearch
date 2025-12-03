@@ -40,7 +40,7 @@ output/
 *.png
 *.pdf
 *.csv
-*.txt
+#*.txt
 
 # Data
 *.db
@@ -57,5 +57,5 @@ htmlcov/
 
 # Secrets
 .env
-credentials.json
-config_local.py
+#credentials.json
+#config_local.py
