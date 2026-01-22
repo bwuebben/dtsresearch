@@ -1,18 +1,18 @@
 """
-Stage 0: Reporting Module
+Stage 0: Reporting Module (Evolved Version)
 
-Creates 17 tables for Stage 0 analysis:
-1-2. Bucket characteristics summary (IG, HY)
-3-4. Bucket regression results (IG, HY)
-5-6. Monotonicity test results (IG, HY)
+Creates tables for Stage 0 analysis testing β ≈ 1 (Merton prediction):
+1-2. Bucket regression results (IG, HY) - β vs λ^Merton
+3-4. β/λ ratio summary statistics (IG, HY)
+5-6. Monotonicity test results (IG, HY) - β decreasing with maturity
 7-8. Within-issuer summary statistics (IG, HY)
-9-10. Within-issuer pooled estimates (IG, HY)
+9-10. Within-issuer pooled β estimates and H0: β=1 test (IG, HY)
 11-12. Sector regression results (IG, HY)
 13-14. Sector hypothesis tests (IG, HY)
 15-16. Decision path summary (IG, HY)
 17. Cross-universe comparison and recommendations
 
-Based on reporting requirements from the paper.
+Based on reporting requirements from the evolved Stage 0 analysis.
 """
 
 import pandas as pd
@@ -24,7 +24,10 @@ from datetime import datetime
 
 class Stage0Reporting:
     """
-    Reporting utilities for Stage 0 analysis.
+    Reporting utilities for evolved Stage 0 analysis.
+
+    Key difference from original: focuses on testing β ≈ 1 (Merton prediction)
+    rather than just λ > 0.
     """
 
     def __init__(self, output_dir: str = "output/stage0_tables"):
@@ -51,7 +54,7 @@ class Stage0Reporting:
         comparison: Dict
     ) -> Dict[str, pd.DataFrame]:
         """
-        Generate all 17 Stage 0 tables.
+        Generate all Stage 0 tables.
 
         Args:
             Results dictionaries from all analyses
@@ -61,23 +64,23 @@ class Stage0Reporting:
         """
         print("Generating Stage 0 tables...")
 
-        # Tables 1-2: Bucket characteristics
-        self.tables['table1_bucket_chars_ig'] = self._table_bucket_characteristics(
+        # Tables 1-2: Bucket regression results
+        self.tables['table1_bucket_regression_ig'] = self._table_bucket_regression(
             bucket_results_ig, 'IG'
         )
-        self.tables['table2_bucket_chars_hy'] = self._table_bucket_characteristics(
+        self.tables['table2_bucket_regression_hy'] = self._table_bucket_regression(
             bucket_results_hy, 'HY'
         )
-        print("  [1-2/17] Bucket characteristics")
+        print("  [1-2/17] Bucket regression results")
 
-        # Tables 3-4: Bucket regression
-        self.tables['table3_bucket_regression_ig'] = self._table_bucket_regression(
+        # Tables 3-4: β/λ ratio summary
+        self.tables['table3_beta_lambda_summary_ig'] = self._table_beta_lambda_summary(
             bucket_results_ig, 'IG'
         )
-        self.tables['table4_bucket_regression_hy'] = self._table_bucket_regression(
+        self.tables['table4_beta_lambda_summary_hy'] = self._table_beta_lambda_summary(
             bucket_results_hy, 'HY'
         )
-        print("  [3-4/17] Bucket regression results")
+        print("  [3-4/17] β/λ ratio summary")
 
         # Tables 5-6: Monotonicity tests
         self.tables['table5_monotonicity_ig'] = self._table_monotonicity(
@@ -148,72 +151,89 @@ class Stage0Reporting:
 
         return self.tables
 
-    def _table_bucket_characteristics(self, results: Dict, universe: str) -> pd.DataFrame:
-        """Table 1-2: Bucket characteristics summary."""
-        bucket_chars = results.get('bucket_characteristics', pd.DataFrame())
+    def _table_bucket_regression(self, results: Dict, universe: str) -> pd.DataFrame:
+        """Table 1-2: Bucket regression results - β vs λ^Merton by bucket."""
+        bucket_df = results.get('bucket_results', pd.DataFrame())
 
-        if len(bucket_chars) == 0:
+        if len(bucket_df) == 0:
             return pd.DataFrame({'Message': [f'No data for {universe}']})
 
-        summary = bucket_chars.groupby(['rating_bucket', 'maturity_bucket']).agg({
-            'n_observations': 'sum',
-            's_bar': 'mean',
-            'T_bar': 'mean'
-        }).reset_index()
+        # Select and rename columns for display
+        display_cols = ['rating_bucket', 'maturity_bucket', 'median_spread', 'median_maturity',
+                       'beta', 'beta_se', 'beta_pvalue', 'lambda_merton', 'beta_lambda_ratio',
+                       'r_squared', 'n_obs']
 
-        summary.columns = ['Rating', 'Maturity', 'N Observations', 'Avg Spread (bps)', 'Avg TTM (yrs)']
-        summary = summary.round(2)
+        available_cols = [c for c in display_cols if c in bucket_df.columns]
+        summary = bucket_df[available_cols].copy()
+
+        # Rename for clarity
+        rename_map = {
+            'rating_bucket': 'Rating',
+            'maturity_bucket': 'Maturity Bucket',
+            'median_spread': 'Spread (bps)',
+            'median_maturity': 'TTM (yrs)',
+            'beta': 'β (Empirical)',
+            'beta_se': 'β SE',
+            'beta_pvalue': 'β p-value',
+            'lambda_merton': 'λ^Merton',
+            'beta_lambda_ratio': 'β/λ Ratio',
+            'r_squared': 'R²',
+            'n_obs': 'N Obs'
+        }
+        summary = summary.rename(columns={k: v for k, v in rename_map.items() if k in summary.columns})
+        summary = summary.round(4)
 
         return summary
 
-    def _table_bucket_regression(self, results: Dict, universe: str) -> pd.DataFrame:
-        """Table 3-4: Bucket regression results."""
-        reg = results.get('regression_results', {})
+    def _table_beta_lambda_summary(self, results: Dict, universe: str) -> pd.DataFrame:
+        """Table 3-4: Summary statistics of β/λ^Merton ratios."""
+        summary = results.get('summary_statistics', {})
 
-        if 'lambda' not in reg:
-            return pd.DataFrame({'Message': [f'No regression results for {universe}']})
+        if 'median_beta_lambda_ratio' not in summary:
+            return pd.DataFrame({'Message': [f'No summary statistics for {universe}']})
 
         data = {
-            'Statistic': ['λ (Maturity effect)', 'α (Intercept)', 'R²', 'R² (adjusted)',
-                         'N Buckets', 'Total Observations'],
-            'Estimate': [
-                f"{reg.get('lambda', np.nan):.6f}",
-                f"{reg.get('alpha', np.nan):.4f}",
-                f"{reg.get('r_squared', np.nan):.4f}",
-                f"{reg.get('r_squared_adj', np.nan):.4f}",
-                f"{reg.get('n_buckets', 0)}",
-                f"{reg.get('total_observations', 0)}"
+            'Statistic': [
+                'Median β/λ Ratio',
+                'Mean β/λ Ratio',
+                'Std Dev β/λ Ratio',
+                '% Buckets within ±10%',
+                '% Buckets within ±20%',
+                'N Buckets',
+                'Median Empirical β',
+                'Median Theoretical λ^Merton',
+                '',
+                'Interpretation'
             ],
-            'Std Error': [
-                f"{reg.get('lambda_se', np.nan):.6f}",
-                f"{reg.get('alpha_se', np.nan):.4f}",
-                '-',
-                '-',
-                '-',
-                '-'
-            ],
-            't-statistic': [
-                f"{reg.get('lambda_tstat', np.nan):.4f}",
-                '-',
-                '-',
-                '-',
-                '-',
-                '-'
-            ],
-            'p-value': [
-                f"{reg.get('lambda_pvalue', np.nan):.4f}",
-                '-',
-                '-',
-                '-',
-                '-',
-                '-'
+            'Value': [
+                f"{summary.get('median_beta_lambda_ratio', np.nan):.4f}",
+                f"{summary.get('mean_beta_lambda_ratio', np.nan):.4f}",
+                f"{summary.get('std_beta_lambda_ratio', np.nan):.4f}",
+                f"{summary.get('pct_within_10pct', 0):.1f}%",
+                f"{summary.get('pct_within_20pct', 0):.1f}%",
+                f"{summary.get('n_buckets', 0)}",
+                f"{summary.get('median_beta', np.nan):.4f}",
+                f"{summary.get('median_lambda_merton', np.nan):.4f}",
+                '',
+                self._interpret_beta_lambda_ratio(summary.get('median_beta_lambda_ratio', np.nan))
             ]
         }
 
         return pd.DataFrame(data)
 
+    def _interpret_beta_lambda_ratio(self, ratio: float) -> str:
+        """Interpret β/λ ratio."""
+        if np.isnan(ratio):
+            return "Insufficient data"
+        if 0.9 <= ratio <= 1.1:
+            return f"β/λ = {ratio:.2f} ≈ 1: Merton prediction validated"
+        elif ratio < 0.9:
+            return f"β/λ = {ratio:.2f} < 1: Merton OVER-predicts sensitivity"
+        else:
+            return f"β/λ = {ratio:.2f} > 1: Merton UNDER-predicts sensitivity"
+
     def _table_monotonicity(self, results: Dict, universe: str) -> pd.DataFrame:
-        """Table 5-6: Monotonicity test results."""
+        """Table 5-6: Monotonicity test results - β should decrease with maturity."""
         monotonicity = results.get('monotonicity_test', {})
         details = monotonicity.get('details', [])
 
@@ -221,22 +241,48 @@ class Stage0Reporting:
             return pd.DataFrame({'Message': [f'No monotonicity results for {universe}']})
 
         df = pd.DataFrame(details)
-        df = df[['rating_bucket', 'sector_group', 'n_buckets', 'spearman_rho', 'p_value', 'is_monotonic']]
-        df.columns = ['Rating', 'Sector Group', 'N Buckets', 'Spearman ρ', 'p-value', 'Monotonic?']
-        df['Monotonic?'] = df['Monotonic?'].apply(lambda x: 'Yes' if x else 'No')
+
+        # Select relevant columns
+        cols = ['rating_bucket', 'n_buckets', 'spearman_rho', 'p_value', 'is_monotonic_decreasing']
+        if 'sector_group' in df.columns:
+            cols.insert(1, 'sector_group')
+
+        available_cols = [c for c in cols if c in df.columns]
+        df = df[available_cols].copy()
+
+        # Rename columns
+        rename_map = {
+            'rating_bucket': 'Rating',
+            'sector_group': 'Sector',
+            'n_buckets': 'N Buckets',
+            'spearman_rho': 'Spearman ρ',
+            'p_value': 'p-value',
+            'is_monotonic_decreasing': 'β Decreases?'
+        }
+        df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+
+        if 'β Decreases?' in df.columns:
+            df['β Decreases?'] = df['β Decreases?'].apply(lambda x: 'Yes' if x else 'No')
+
         df = df.round(4)
 
         # Add summary row
         summary_row = pd.DataFrame({
-            'Rating': ['OVERALL'],
-            'Sector Group': ['-'],
-            'N Buckets': [df['N Buckets'].sum()],
-            'Spearman ρ': ['-'],
-            'p-value': ['-'],
-            'Monotonic?': [f"{monotonicity.get('pct_monotonic_groups', 0):.0f}% groups"]
+            df.columns[0]: ['OVERALL'],
+            **{col: ['-'] for col in df.columns[1:-1]},
+            df.columns[-1]: [f"{monotonicity.get('pct_monotonic_groups', 0):.0f}% groups"]
         })
 
-        return pd.concat([df, summary_row], ignore_index=True)
+        df = pd.concat([df, summary_row], ignore_index=True)
+
+        # Add interpretation
+        interp_row = pd.DataFrame({
+            df.columns[0]: ['Interpretation'],
+            **{col: [''] for col in df.columns[1:-1]},
+            df.columns[-1]: [monotonicity.get('interpretation', 'N/A')]
+        })
+
+        return pd.concat([df, interp_row], ignore_index=True)
 
     def _table_within_issuer_summary(self, results: Dict, universe: str) -> pd.DataFrame:
         """Table 7-8: Within-issuer summary statistics."""
@@ -252,8 +298,14 @@ class Stage0Reporting:
                 '% with estimate',
                 'Mean bonds per issuer-week',
                 'Mean maturity range (years)',
-                '% λ significantly positive',
-                '% λ significantly negative'
+                'Mean R² (within-issuer)',
+                '',
+                'β Distribution:',
+                '  Median β',
+                '  Mean β',
+                '  Std Dev β',
+                '  % β in [0.8, 1.2]',
+                '  % β positive'
             ],
             'Value': [
                 f"{diagnostics.get('n_bonds_after_filter', 0):,}",
@@ -264,41 +316,65 @@ class Stage0Reporting:
                 f"{diagnostics.get('pct_issuer_weeks_with_estimate', 0):.1f}%",
                 f"{diagnostics.get('mean_bonds_per_issuer_week', np.nan):.2f}",
                 f"{diagnostics.get('mean_maturity_range', np.nan):.2f}",
-                f"{diagnostics.get('pct_significant_positive', 0):.1f}%",
-                f"{diagnostics.get('pct_significant_negative', 0):.1f}%"
+                f"{diagnostics.get('mean_r_squared', np.nan):.4f}",
+                '',
+                '',
+                f"{diagnostics.get('median_beta', np.nan):.4f}",
+                f"{diagnostics.get('mean_beta', np.nan):.4f}",
+                f"{diagnostics.get('std_beta', np.nan):.4f}",
+                f"{diagnostics.get('pct_beta_in_0_8_1_2', 0):.1f}%",
+                f"{diagnostics.get('pct_beta_positive', 0):.1f}%"
             ]
         }
 
         return pd.DataFrame(data)
 
     def _table_within_issuer_pooled(self, results: Dict, universe: str) -> pd.DataFrame:
-        """Table 9-10: Within-issuer pooled estimates."""
+        """Table 9-10: Within-issuer pooled estimates and hypothesis tests."""
         pooled = results.get('pooled_estimate', {})
         hypothesis = results.get('hypothesis_test', {})
 
         data = {
             'Statistic': [
-                'Pooled λ',
+                'Pooled β (inverse-variance weighted)',
                 'Standard Error',
                 '95% CI Lower',
                 '95% CI Upper',
                 'N Estimates',
-                'Test: H0: λ ≤ 0',
-                't-statistic',
-                'p-value (one-sided)',
-                'Reject H0?',
+                '',
+                'Test 1: H0: β = 1 (Merton prediction)',
+                '  t-statistic',
+                '  p-value (two-sided)',
+                '  Reject H0 (β ≠ 1)?',
+                '',
+                'Test 2: H0: β ≤ 0 (sanity check)',
+                '  t-statistic',
+                '  p-value (one-sided)',
+                '',
+                'β in [0.9, 1.1]?',
+                'Merton Validated?',
+                '',
                 'Interpretation'
             ],
             'Value': [
-                f"{pooled.get('pooled_estimate', np.nan):.6f}",
-                f"{pooled.get('pooled_se', np.nan):.6f}",
+                f"{pooled.get('pooled_beta', np.nan):.6f}",
+                f"{pooled.get('pooled_beta_se', np.nan):.6f}",
                 f"{pooled.get('ci_lower', np.nan):.6f}",
                 f"{pooled.get('ci_upper', np.nan):.6f}",
                 f"{pooled.get('n_estimates', 0)}",
-                hypothesis.get('test', 'N/A'),
-                f"{hypothesis.get('t_statistic', np.nan):.4f}",
-                f"{hypothesis.get('p_value', np.nan):.4f}",
-                'Yes' if hypothesis.get('reject_null', False) else 'No',
+                '',
+                '',
+                f"{hypothesis.get('t_statistic_beta_eq_1', np.nan):.4f}",
+                f"{hypothesis.get('p_value_beta_equals_1', np.nan):.4f}",
+                'Yes' if hypothesis.get('reject_beta_equals_1', False) else 'No',
+                '',
+                '',
+                f"{hypothesis.get('t_statistic_beta_pos', np.nan):.4f}",
+                f"{hypothesis.get('p_value_beta_positive', np.nan):.4f}",
+                '',
+                'Yes' if hypothesis.get('beta_in_range_0_9_1_1', False) else 'No',
+                'Yes' if hypothesis.get('merton_validates', False) else 'No',
+                '',
                 hypothesis.get('interpretation', 'N/A')
             ]
         }
@@ -307,65 +383,100 @@ class Stage0Reporting:
 
     def _table_sector_regression(self, results: Dict, universe: str) -> pd.DataFrame:
         """Table 11-12: Sector regression results."""
-        reg = results.get('sector_regression', {})
+        base_reg = results.get('base_regression', {})
+        sector_reg = results.get('sector_regression', {})
 
-        if 'lambda' not in reg:
+        if 'beta_0' not in sector_reg and 'beta_0' not in base_reg:
             return pd.DataFrame({'Message': [f'No sector regression for {universe}']})
 
         data = {
             'Coefficient': [
-                'α (Intercept)',
-                'λ (Maturity - Industrial)',
-                'β_Financial (Financial interaction)',
-                'β_Utility (Utility interaction)',
-                'β_Energy (Energy interaction)'
+                'Base Regression (no sector interactions):',
+                '  β₀ (Merton-scaled DTS)',
+                '',
+                'Sector Regression (with interactions):',
+                '  β₀ (Base - Industrial)',
+                '  β_Financial (Financial deviation)',
+                '  β_Utility (Utility deviation)',
+                '  β_Energy (Energy deviation)',
+                '',
+                'Total Sector Sensitivities:',
+                '  Industrial (β₀)',
+                '  Financial (β₀ + β_fin)',
+                '  Utility (β₀ + β_util)',
+                '  Energy (β₀ + β_energy)',
+                '',
+                'Model Statistics:',
+                '  R²',
+                '  N Observations',
+                '  N Clusters'
             ],
             'Estimate': [
-                f"{reg.get('alpha', np.nan):.6f}",
-                f"{reg.get('lambda', np.nan):.6f}",
-                f"{reg.get('beta_financial', np.nan):.6f}",
-                f"{reg.get('beta_utility', np.nan):.6f}",
-                f"{reg.get('beta_energy', np.nan):.6f}"
+                '',
+                f"{base_reg.get('beta_0', np.nan):.4f}",
+                '',
+                '',
+                f"{sector_reg.get('beta_0', np.nan):.4f}",
+                f"{sector_reg.get('beta_financial', np.nan):.4f}",
+                f"{sector_reg.get('beta_utility', np.nan):.4f}",
+                f"{sector_reg.get('beta_energy', np.nan):.4f}",
+                '',
+                '',
+                f"{sector_reg.get('sensitivity_industrial', np.nan):.4f}",
+                f"{sector_reg.get('sensitivity_financial', np.nan):.4f}",
+                f"{sector_reg.get('sensitivity_utility', np.nan):.4f}",
+                f"{sector_reg.get('sensitivity_energy', np.nan):.4f}",
+                '',
+                '',
+                f"{sector_reg.get('r_squared', np.nan):.4f}",
+                f"{sector_reg.get('n_obs', 0):,}",
+                f"{sector_reg.get('n_clusters', 0):,}"
             ],
             'Std Error': [
+                '',
+                f"{base_reg.get('beta_0_se', np.nan):.4f}",
+                '',
+                '',
+                f"{sector_reg.get('beta_0_se', np.nan):.4f}",
+                f"{sector_reg.get('beta_financial_se', np.nan):.4f}",
+                f"{sector_reg.get('beta_utility_se', np.nan):.4f}",
+                f"{sector_reg.get('beta_energy_se', np.nan):.4f}",
+                '',
+                '',
                 '-',
-                f"{reg.get('lambda_se', np.nan):.6f}",
-                f"{reg.get('beta_financial_se', np.nan):.6f}",
-                f"{reg.get('beta_utility_se', np.nan):.6f}",
-                f"{reg.get('beta_energy_se', np.nan):.6f}"
-            ],
-            't-statistic': [
                 '-',
-                f"{reg.get('lambda_tstat', np.nan):.4f}",
-                f"{reg.get('beta_financial_tstat', np.nan):.4f}",
-                f"{reg.get('beta_utility_tstat', np.nan):.4f}",
-                f"{reg.get('beta_energy_tstat', np.nan):.4f}"
+                '-',
+                '-',
+                '',
+                '',
+                '-',
+                '-',
+                '-'
             ],
             'p-value': [
+                '',
+                f"{base_reg.get('beta_0_pvalue', np.nan):.4f}",
+                '',
+                '',
+                f"{sector_reg.get('beta_0_pvalue', np.nan):.4f}",
+                f"{sector_reg.get('beta_financial_pvalue', np.nan):.4f}",
+                f"{sector_reg.get('beta_utility_pvalue', np.nan):.4f}",
+                f"{sector_reg.get('beta_energy_pvalue', np.nan):.4f}",
+                '',
+                '',
                 '-',
-                f"{reg.get('lambda_pvalue', np.nan):.4f}",
-                f"{reg.get('beta_financial_pvalue', np.nan):.4f}",
-                f"{reg.get('beta_utility_pvalue', np.nan):.4f}",
-                f"{reg.get('beta_energy_pvalue', np.nan):.4f}"
+                '-',
+                '-',
+                '-',
+                '',
+                '',
+                '-',
+                '-',
+                '-'
             ]
         }
 
-        df = pd.DataFrame(data)
-
-        # Add summary stats
-        summary = pd.DataFrame({
-            'Coefficient': ['R²', 'N Observations', 'N Clusters'],
-            'Estimate': [
-                f"{reg.get('r_squared', np.nan):.4f}",
-                f"{reg.get('n_obs', 0):,}",
-                f"{reg.get('n_clusters', 0):,}"
-            ],
-            'Std Error': ['-', '-', '-'],
-            't-statistic': ['-', '-', '-'],
-            'p-value': ['-', '-', '-']
-        })
-
-        return pd.concat([df, summary], ignore_index=True)
+        return pd.DataFrame(data)
 
     def _table_sector_tests(self, results: Dict, universe: str) -> pd.DataFrame:
         """Table 13-14: Sector hypothesis tests."""
@@ -377,10 +488,10 @@ class Stage0Reporting:
         # Joint test
         data.append({
             'Test': 'Joint F-test',
-            'Hypothesis': joint.get('test', 'N/A'),
-            'Statistic': f"{joint.get('f_statistic', np.nan):.4f}",
+            'Hypothesis': joint.get('test', 'H0: β_fin = β_util = β_energy = 0'),
+            'Statistic': f"F = {joint.get('f_statistic', np.nan):.4f}",
             'p-value': f"{joint.get('p_value', np.nan):.4f}",
-            'Reject H0?': 'Yes' if joint.get('reject_null', False) else 'No',
+            'Reject H0?': 'Yes' if joint.get('sectors_differ', False) else 'No',
             'Interpretation': joint.get('interpretation', 'N/A')
         })
 
@@ -389,11 +500,11 @@ class Stage0Reporting:
             fin = sector_tests['financial_test']
             data.append({
                 'Test': 'Financial sector',
-                'Hypothesis': 'H0: β_fin ≤ 0 vs H1: β_fin > 0',
-                'Statistic': f"{fin.get('t_statistic', np.nan):.4f}",
+                'Hypothesis': fin.get('hypothesis', 'H0: β_fin ≤ 0 vs H1: β_fin > 0'),
+                'Statistic': f"t = {fin.get('t_statistic', np.nan):.4f}",
                 'p-value': f"{fin.get('p_value', np.nan):.4f}",
                 'Reject H0?': 'Yes' if fin.get('reject_null', False) else 'No',
-                'Interpretation': fin.get('interpretation', 'N/A')
+                'Interpretation': fin.get('interpretation', 'N/A')[:60] + '...' if len(fin.get('interpretation', '')) > 60 else fin.get('interpretation', 'N/A')
             })
 
         # Utility test
@@ -401,11 +512,35 @@ class Stage0Reporting:
             util = sector_tests['utility_test']
             data.append({
                 'Test': 'Utility sector',
-                'Hypothesis': 'H0: β_util ≥ 0 vs H1: β_util < 0',
-                'Statistic': f"{util.get('t_statistic', np.nan):.4f}",
+                'Hypothesis': util.get('hypothesis', 'H0: β_util ≥ 0 vs H1: β_util < 0'),
+                'Statistic': f"t = {util.get('t_statistic', np.nan):.4f}",
                 'p-value': f"{util.get('p_value', np.nan):.4f}",
                 'Reject H0?': 'Yes' if util.get('reject_null', False) else 'No',
-                'Interpretation': util.get('interpretation', 'N/A')
+                'Interpretation': util.get('interpretation', 'N/A')[:60] + '...' if len(util.get('interpretation', '')) > 60 else util.get('interpretation', 'N/A')
+            })
+
+        # Energy test
+        if 'energy_test' in sector_tests:
+            energy = sector_tests['energy_test']
+            data.append({
+                'Test': 'Energy sector',
+                'Hypothesis': energy.get('hypothesis', 'H0: β_energy = 0'),
+                'Statistic': f"t = {energy.get('t_statistic', np.nan):.4f}",
+                'p-value': f"{energy.get('p_value', np.nan):.4f}",
+                'Reject H0?': 'Yes' if energy.get('reject_null', False) else 'No',
+                'Interpretation': energy.get('interpretation', 'N/A')[:60] + '...' if len(energy.get('interpretation', '')) > 60 else energy.get('interpretation', 'N/A')
+            })
+
+        # Summary
+        if 'summary' in sector_tests:
+            summary = sector_tests['summary']
+            data.append({
+                'Test': 'SUMMARY',
+                'Hypothesis': '',
+                'Statistic': '',
+                'p-value': '',
+                'Reject H0?': '',
+                'Interpretation': 'Sector adjustments needed' if summary.get('need_sector_adjustment', False) else 'No sector adjustments needed'
             })
 
         return pd.DataFrame(data)
@@ -416,21 +551,30 @@ class Stage0Reporting:
         path_name = synthesis.get('path_name', 'Unknown')
         rationale = synthesis.get('rationale', 'N/A')
         criteria = synthesis.get('decision_criteria', {})
+        key_stats = synthesis.get('key_statistics', {})
         recommendations = synthesis.get('recommendations', {})
 
         data = {
             'Item': [
-                'Decision Path',
+                'DECISION',
+                'Path Number',
                 'Path Name',
                 'Rationale',
                 '',
-                'Decision Criteria:',
-                '  λ > 0?',
-                '  Monotonic?',
-                '  Consistent λ?',
-                '  Sectors matter?',
+                'KEY STATISTICS (β should be ≈ 1):',
+                '  Bucket median β/λ ratio',
+                '  Within-issuer pooled β',
+                '  Sector base β₀',
                 '',
-                'Recommendations:',
+                'DECISION CRITERIA:',
+                '  β ≈ 1 at bucket level?',
+                '  β ≈ 1 at within-issuer level?',
+                '  Monotonic (β ↓ with maturity)?',
+                '  Sectors matter?',
+                '  Consistent across analyses?',
+                '  Theory validated?',
+                '',
+                'RECOMMENDATIONS:',
                 '  Stage A',
                 '  Stage B',
                 '  Stage C',
@@ -438,22 +582,30 @@ class Stage0Reporting:
                 '  Stage E'
             ],
             'Value': [
+                '',
                 f"Path {path}",
                 path_name,
-                rationale,
+                rationale[:80] + '...' if len(rationale) > 80 else rationale,
                 '',
                 '',
-                'Yes' if criteria.get('lambda_positive', False) else 'No',
+                f"{key_stats.get('bucket_median_ratio', np.nan):.3f}",
+                f"{key_stats.get('within_beta', np.nan):.3f}",
+                f"{key_stats.get('base_beta', np.nan):.3f}",
+                '',
+                '',
+                'Yes' if criteria.get('bucket_beta_near_1', False) else 'No',
+                'Yes' if criteria.get('within_beta_near_1', False) else 'No',
                 'Yes' if criteria.get('monotonic', False) else 'No',
-                'Yes' if criteria.get('consistent_lambda', False) else 'No',
                 'Yes' if criteria.get('sectors_matter', False) else 'No',
+                'Yes' if criteria.get('consistent', False) else 'No',
+                'Yes' if criteria.get('theory_validated', False) else 'No',
                 '',
                 '',
-                recommendations.get('stage_A', 'N/A'),
-                recommendations.get('stage_B', 'N/A'),
-                recommendations.get('stage_C', 'N/A'),
-                recommendations.get('stage_D', 'N/A'),
-                recommendations.get('stage_E', 'N/A')
+                recommendations.get('stage_A', 'N/A')[:60] + '...' if len(recommendations.get('stage_A', '')) > 60 else recommendations.get('stage_A', 'N/A'),
+                recommendations.get('stage_B', 'N/A')[:60] + '...' if len(recommendations.get('stage_B', '')) > 60 else recommendations.get('stage_B', 'N/A'),
+                recommendations.get('stage_C', 'N/A')[:60] + '...' if len(recommendations.get('stage_C', '')) > 60 else recommendations.get('stage_C', 'N/A'),
+                recommendations.get('stage_D', 'N/A')[:60] + '...' if len(recommendations.get('stage_D', '')) > 60 else recommendations.get('stage_D', 'N/A'),
+                recommendations.get('stage_E', 'N/A')[:60] + '...' if len(recommendations.get('stage_E', '')) > 60 else recommendations.get('stage_E', 'N/A')
             ]
         }
 
@@ -470,66 +622,91 @@ class Stage0Reporting:
         """Table 17: Cross-universe comparison."""
         data = []
 
-        # λ estimates
+        # β estimates across analyses (should be ≈ 1)
         data.append({
-            'Category': 'Bucket λ',
-            'IG': f"{bucket_results_ig.get('regression_results', {}).get('lambda', np.nan):.6f}",
-            'HY': f"{bucket_results_hy.get('regression_results', {}).get('lambda', np.nan):.6f}",
-            'Difference': '-',
-            'Significant?': '-'
+            'Category': 'β ESTIMATES (should be ≈ 1)',
+            'IG': '',
+            'HY': '',
+            'Same Path?': '',
+            'Notes': ''
         })
 
+        ig_bucket_ratio = bucket_results_ig.get('summary_statistics', {}).get('median_beta_lambda_ratio', np.nan)
+        hy_bucket_ratio = bucket_results_hy.get('summary_statistics', {}).get('median_beta_lambda_ratio', np.nan)
         data.append({
-            'Category': 'Within-Issuer λ',
-            'IG': f"{within_issuer_results_ig.get('pooled_estimate', {}).get('pooled_estimate', np.nan):.6f}",
-            'HY': f"{within_issuer_results_hy.get('pooled_estimate', {}).get('pooled_estimate', np.nan):.6f}",
-            'Difference': '-',
-            'Significant?': '-'
+            'Category': '  Bucket β/λ ratio',
+            'IG': f"{ig_bucket_ratio:.3f}",
+            'HY': f"{hy_bucket_ratio:.3f}",
+            'Same Path?': '-',
+            'Notes': '✓' if 0.8 <= ig_bucket_ratio <= 1.2 and 0.8 <= hy_bucket_ratio <= 1.2 else '✗'
         })
 
+        ig_within_beta = within_issuer_results_ig.get('pooled_estimate', {}).get('pooled_beta', np.nan)
+        hy_within_beta = within_issuer_results_hy.get('pooled_estimate', {}).get('pooled_beta', np.nan)
         data.append({
-            'Category': 'Sector (Base) λ',
-            'IG': f"{sector_results_ig.get('base_regression', {}).get('lambda', np.nan):.6f}",
-            'HY': f"{sector_results_hy.get('base_regression', {}).get('lambda', np.nan):.6f}",
-            'Difference': '-',
-            'Significant?': '-'
+            'Category': '  Within-Issuer β',
+            'IG': f"{ig_within_beta:.3f}",
+            'HY': f"{hy_within_beta:.3f}",
+            'Same Path?': '-',
+            'Notes': '✓' if 0.8 <= ig_within_beta <= 1.2 and 0.8 <= hy_within_beta <= 1.2 else '✗'
         })
 
-        # Decision paths
+        ig_base_beta = sector_results_ig.get('base_regression', {}).get('beta_0', np.nan)
+        hy_base_beta = sector_results_hy.get('base_regression', {}).get('beta_0', np.nan)
+        data.append({
+            'Category': '  Sector base β₀',
+            'IG': f"{ig_base_beta:.3f}",
+            'HY': f"{hy_base_beta:.3f}",
+            'Same Path?': '-',
+            'Notes': '✓' if 0.8 <= ig_base_beta <= 1.2 and 0.8 <= hy_base_beta <= 1.2 else '✗'
+        })
+
+        # Blank row
         data.append({
             'Category': '',
             'IG': '',
             'HY': '',
-            'Difference': '',
-            'Significant?': ''
+            'Same Path?': '',
+            'Notes': ''
         })
 
+        # Decision paths
         ig_path = synthesis_ig.get('decision_path', 0)
         hy_path = synthesis_hy.get('decision_path', 0)
 
         data.append({
-            'Category': 'Decision Path',
-            'IG': f"Path {ig_path}: {synthesis_ig.get('path_name', 'Unknown')}",
-            'HY': f"Path {hy_path}: {synthesis_hy.get('path_name', 'Unknown')}",
-            'Difference': 'Same' if ig_path == hy_path else 'Different',
-            'Significant?': '-'
+            'Category': 'DECISION PATHS',
+            'IG': f"Path {ig_path}: {synthesis_ig.get('path_name', 'Unknown')[:30]}",
+            'HY': f"Path {hy_path}: {synthesis_hy.get('path_name', 'Unknown')[:30]}",
+            'Same Path?': 'Yes' if ig_path == hy_path else 'No',
+            'Notes': ''
         })
 
-        # Unified approach
+        # Blank row
         data.append({
             'Category': '',
             'IG': '',
             'HY': '',
-            'Difference': '',
-            'Significant?': ''
+            'Same Path?': '',
+            'Notes': ''
         })
 
+        # Unified approach
         data.append({
-            'Category': 'Unified Approach',
+            'Category': 'UNIFIED APPROACH',
             'IG': comparison.get('unified_approach', 'N/A'),
             'HY': '',
-            'Difference': '',
-            'Significant?': ''
+            'Same Path?': '',
+            'Notes': ''
+        })
+
+        # Interpretation
+        data.append({
+            'Category': 'INTERPRETATION',
+            'IG': comparison.get('interpretation', 'N/A')[:60] + '...' if len(comparison.get('interpretation', '')) > 60 else comparison.get('interpretation', 'N/A'),
+            'HY': '',
+            'Same Path?': '',
+            'Notes': ''
         })
 
         return pd.DataFrame(data)
@@ -543,7 +720,8 @@ class Stage0Reporting:
         summary_path = self.output_dir / 'TABLES_SUMMARY.txt'
         with open(summary_path, 'w') as f:
             f.write("=" * 80 + "\n")
-            f.write("STAGE 0 REPORTING SUMMARY\n")
+            f.write("STAGE 0 REPORTING SUMMARY (EVOLVED VERSION)\n")
+            f.write("Testing β ≈ 1 (Merton Prediction)\n")
             f.write("=" * 80 + "\n")
             f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"Total tables: {len(self.tables)}\n\n")
