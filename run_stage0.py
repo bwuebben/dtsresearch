@@ -30,7 +30,7 @@ from dts_research.analysis.stage0_bucket import run_bucket_analysis_both_univers
 from dts_research.analysis.stage0_within_issuer import run_within_issuer_analysis_both_universes
 from dts_research.analysis.stage0_sector import run_sector_analysis_both_universes
 from dts_research.analysis.stage0_synthesis import run_stage0_synthesis
-from dts_research.plotting.stage0_plots import create_all_stage0_plots
+from dts_research.visualization.stage0_plots import create_all_stage0_plots
 from dts_research.utils.reporting0 import generate_stage0_report
 
 
