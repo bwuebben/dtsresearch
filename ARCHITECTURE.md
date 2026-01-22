@@ -107,55 +107,61 @@ Total buckets: 6 ratings × 6 maturities × N sectors
 
 #### 3.2 Stage 0 Analysis (Evolved DTS Foundation)
 
-**Purpose**: Three-pronged theoretical validation framework to determine if Merton adequately describes maturity-spread relationships
+**Purpose**: Three-pronged theoretical validation framework to determine if Merton adequately describes spread sensitivities to market shocks
 
 **Key modules**:
-- `stage0_bucket.py` (~820 lines): Spec 0.1 - Bucket-level cross-sectional analysis
-- `stage0_within_issuer.py` (~920 lines): Spec 0.2 - Within-issuer fixed effects with inverse-variance weighted pooling
-- `stage0_sector.py` (~800 lines): Spec 0.3 - Sector interaction tests (Financial, Utility, Energy vs Industrial baseline)
-- `stage0.py` (~1,050 lines): Orchestration class and five-path decision framework
+- `stage0_bucket.py`: Spec 0.1 - Time-series regression of spread changes on DTS factor
+- `stage0_within_issuer.py`: Spec 0.2 - Regression of spread changes on λ^Merton, tests β = 1
+- `stage0_sector.py`: Spec 0.3 - Sector interactions using Merton-scaled DTS factor
+- `stage0_synthesis.py`: Five-path decision framework based on β ≈ 1 criterion
 
-**Specification 0.1 (Bucket-Level)**:
+**Specification 0.1 (Bucket-Level Time-Series)**:
 ```python
-y_i,t = α^(k) + β^(k) · f_DTS,t + ε_i,t
+y_{i,t} = α^(k) + β^(k) · f_{DTS,t} + ε_{i,t}
 
 where:
-- y_i,t: percentage spread change for bond i in bucket k
-- f_DTS,t: index-level percentage spread change
+- y_{i,t} = Δs/s: percentage spread change for bond i
+- f_{DTS,t}: index-level percentage spread change (DTS factor)
 - Clustered standard errors by week
-- Test: β^(k) vs λ^Merton, monotonicity across maturities
+- Test: Compare β^(k) to λ^Merton (β/λ ratio ≈ 1?)
+- Test: Monotonicity (β decreases with maturity as Merton predicts)
 ```
 
 **Specification 0.2 (Within-Issuer)**:
 ```python
-y_i,t = α_j,w + β_T · TTM_i,w + ε_i,t
+Δs_{i,t} / s_{i,t-1} = α_{j,t} + β · λ^Merton_{i,t} + ε_{i,t}
 
 where:
-- α_j,w: issuer-week fixed effects (absorbs credit quality)
-- β_T: maturity sensitivity (same issuer, different maturities)
+- α_{j,t}: issuer-week fixed effects (absorbs credit quality)
+- λ^Merton_{i,t}: Merton-predicted elasticity for bond i
+- β: coefficient on Merton lambda (should equal 1 if theory correct)
+- Test: H0: β = 1 (not just β > 0)
 - Inverse-variance weighted pooling across issuer-weeks
 - Requires: ≥3 bonds per issuer-week, ≥2 years TTM dispersion
 ```
 
 **Specification 0.3 (Sector Interaction)**:
 ```python
-y_i,t = α^(k) + β^(k) · f_DTS,t +
-        γ_F^(m) · (Financial_i × f_DTS,t) +
-        γ_U^(m) · (Utility_i × f_DTS,t) +
-        γ_E^(m) · (Energy_i × f_DTS,t) + ε_i,t
+y_{i,t} = α + β_0 · (λ^Merton_i × f_{DTS,t})
+          + β_F · (Financial_i × λ^Merton_i × f_{DTS,t})
+          + β_U · (Utility_i × λ^Merton_i × f_{DTS,t})
+          + β_E · (Energy_i × λ^Merton_i × f_{DTS,t}) + ε_{i,t}
 
 where:
-- γ_*^(m): sector-specific deviations by maturity
-- Test: Joint F-test (all sectors = 0), individual sector tests
+- λ^Merton_i × f_{DTS,t}: Merton-scaled DTS factor
+- β_0: baseline sensitivity (Industrial sector)
+- β_F, β_U, β_E: sector-specific deviations
+- Test: Joint F-test (sectors don't differ), individual sector tests
+- Test: Total sensitivity per sector (β_0 + β_sector ≈ 1?)
 - Clustered by issuer or week
 ```
 
-**Five Decision Paths**:
-1. **Path 1 (Perfect Alignment)**: All three specs support theory → Use standard Merton throughout
-2. **Path 2 (Sector Heterogeneity)**: Specs 0.1-0.2 support theory, Spec 0.3 finds sector differences → Add sector adjustments
-3. **Path 3 (Weak Evidence)**: Mixed signals, modest effects → Proceed cautiously with alternative tests
-4. **Path 4 (Mixed Evidence)**: Conflicting results → Use model-free approaches, skip time-variation tests
-5. **Path 5 (Theory Fails)**: Theory clearly fails → Focus on purely empirical models
+**Five Decision Paths** (based on β ≈ 1 criterion):
+1. **Path 1 (Perfect Alignment)**: β/λ ratio ≈ 1 across all methods → Use standard Merton throughout
+2. **Path 2 (Sector Heterogeneity)**: Base β ≈ 1 but sectors differ significantly → Add sector adjustments
+3. **Path 3 (Weak Evidence)**: β in [0.7, 1.3] but outside [0.9, 1.1] → Proceed cautiously
+4. **Path 4 (Mixed Evidence)**: Conflicting results across methods → Use model-free approaches
+5. **Path 5 (Theory Fails)**: β far from 1, non-monotonic → Focus on purely empirical models
 
 #### 3.3 Stage A-E Analysis Modules (Stage 0 Integrated)
 

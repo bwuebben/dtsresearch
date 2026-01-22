@@ -23,7 +23,7 @@ A **complete, production-ready implementation** of the entire corporate bond spr
 
 ### Stage 0: Evolved DTS Foundation (~6,600 lines, ~3 minutes)
 
-**Purpose**: Three-pronged theoretical validation framework to determine if Merton adequately describes maturity-spread relationships
+**Purpose**: Three-pronged theoretical validation framework to determine if Merton adequately describes spread sensitivities to market shocks
 
 **Phase 1 - Core Infrastructure (~1,700 lines)**:
 - `merton.py` (313 lines): Lambda calculator with T and s tables
@@ -33,25 +33,25 @@ A **complete, production-ready implementation** of the entire corporate bond spr
 - `buckets.py` (260 lines): Classification into rating × maturity × sector buckets
 
 **Phase 2 - Evolved Stage 0 (~4,900 lines)**:
-- `stage0_bucket.py` (820 lines): Spec 0.1 - Bucket-level cross-sectional analysis
-- `stage0_within_issuer.py` (920 lines): Spec 0.2 - Within-issuer fixed effects with inverse-variance pooling
-- `stage0_sector.py` (800 lines): Spec 0.3 - Sector interaction tests (Financial/Utility/Energy vs Industrial)
-- `stage0.py` (1,050 lines): Orchestration + five-path decision framework
+- `stage0_bucket.py`: Spec 0.1 - Time-series regression of spread changes on DTS factor
+- `stage0_within_issuer.py`: Spec 0.2 - Regression of spread changes on λ^Merton, tests β = 1
+- `stage0_sector.py`: Spec 0.3 - Sector interactions using Merton-scaled DTS factor
+- `stage0_synthesis.py`: Five-path decision framework based on β ≈ 1 criterion
 - `stage0_plots.py` (650 lines): 10 figures (3 per spec + decision viz)
 - `reporting.py` (1,050 lines): 17 tables + 3-5 page executive summary
 - `run_stage0.py` (280 lines): Pipeline orchestration
 
 **Three Specifications**:
-- **Spec 0.1**: Bucket-level regressions (72 buckets), test β vs λ, monotonicity
-- **Spec 0.2**: Within-issuer analysis (issuer-week FE), isolates maturity effect, requires ≥3 bonds/≥2y TTM dispersion
-- **Spec 0.3**: Sector interactions (Financial/Utility/Energy dummies), joint F-test + individual tests
+- **Spec 0.1**: Bucket-level time-series regressions (y = Δs/s on f_DTS), compare β to λ^Merton, test monotonicity
+- **Spec 0.2**: Within-issuer regressions of spread changes on λ^Merton, tests H0: β = 1
+- **Spec 0.3**: Sector interactions using Merton-scaled factor (λ^Merton × f_DTS), joint F-test
 
-**Five Decision Paths**:
-1. **Perfect Alignment**: All three specs support theory → Standard Merton throughout
-2. **Sector Heterogeneity**: Specs 0.1-0.2 support, 0.3 finds sectors → Add sector adjustments
-3. **Weak Evidence**: Mixed signals, modest effects → Proceed cautiously
-4. **Mixed Evidence**: Conflicting results → Model-free approaches, skip time-variation
-5. **Theory Fails**: Clear failure → Purely empirical models
+**Five Decision Paths** (based on β ≈ 1 criterion):
+1. **Perfect Alignment**: β/λ ratio ≈ 1 across all methods → Standard Merton throughout
+2. **Sector Heterogeneity**: Base β ≈ 1 but sectors differ → Add sector adjustments
+3. **Weak Evidence**: β in [0.7, 1.3] but outside [0.9, 1.1] → Proceed cautiously
+4. **Mixed Evidence**: Conflicting results across methods → Model-free approaches
+5. **Theory Fails**: β far from 1, non-monotonic → Purely empirical models
 
 **Integration**: All Stages A-E check decision path and conditionally skip/modify analyses
 

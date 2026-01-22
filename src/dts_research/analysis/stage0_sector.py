@@ -2,12 +2,16 @@
 Stage 0: Sector Interaction Analysis
 
 Implements the third component of evolved Stage 0:
-- Tests for sector-specific maturity effects
-- Financial sector: Expected β > 0 (correlation risk, regulatory)
-- Utility sector: Expected β < 0 (regulatory protection, stable cash flows)
+- Tests for sector-specific DTS sensitivities
+- Financial sector: Expected β > 0 (amplifies market moves)
+- Utility sector: Expected β < 0 (dampens market moves)
 - Joint F-test for significance of sector interactions
 
-Based on Specification 0.3 from the paper.
+Based on Specification 0.3 / Equation 4.6 from the paper:
+    y_{i,t} = α + β_0 [λ^Merton_{i,t} · f_{DTS,t}] +
+              Σ_s β_s · 1{i∈s} · [λ^Merton_{i,t} · f_{DTS,t}] + ε_{i,t}
+
+where y_{i,t} is the percentage spread change, and Industrial is the reference sector.
 """
 
 import pandas as pd
@@ -17,6 +21,7 @@ import statsmodels.api as sm
 from scipy import stats
 
 from ..data.sector_classification import SectorClassifier
+from ..models.merton import MertonLambdaCalculator, calculate_merton_lambda
 from ..utils.statistical_tests import (
     clustered_standard_errors,
     joint_f_test
@@ -28,18 +33,20 @@ class SectorInteractionAnalysis:
     Sector interaction analysis for Stage 0.
 
     Regression specification:
-    ln(s_it) = α + λ·T_it + β_fin·(T_it × Financial_i) +
-               β_util·(T_it × Utility_i) + β_energy·(T_it × Energy_i) + ε_it
+    y_{i,t} = α + β_0 [λ^Merton · f_DTS] +
+              β_fin · [λ^Merton · f_DTS × Financial] +
+              β_util · [λ^Merton · f_DTS × Utility] +
+              β_energy · [λ^Merton · f_DTS × Energy] + ε_{i,t}
 
     Tests:
     1. Joint F-test: H0: β_fin = β_util = β_energy = 0
-    2. Financial sector: H0: β_fin ≤ 0 vs H1: β_fin > 0
-    3. Utility sector: H0: β_util ≥ 0 vs H1: β_util < 0
+    2. Financial sector: β_0 + β_fin is their DTS sensitivity
+    3. Utility sector: β_0 + β_util is their DTS sensitivity
     """
 
     def __init__(self):
         """Initialize sector interaction analysis."""
-        pass
+        self.merton_calc = MertonLambdaCalculator()
 
     def run_sector_analysis(
         self,
@@ -79,19 +86,31 @@ class SectorInteractionAnalysis:
         if len(bond_data) == 0:
             return self._empty_results(universe, "No bonds in universe")
 
-        # Step 3: Run base regression (no sector interactions)
+        # Step 3: Compute spread changes
+        bond_data = self._compute_spread_changes(bond_data)
+
+        if len(bond_data) == 0:
+            return self._empty_results(universe, "No data after computing spread changes")
+
+        # Step 4: Compute Merton lambda and index DTS factor
+        bond_data = self._compute_merton_scaled_factor(bond_data)
+
+        if len(bond_data) == 0:
+            return self._empty_results(universe, "No data after computing Merton factors")
+
+        # Step 5: Run base regression (no sector interactions)
         base_regression = self._run_base_regression(bond_data, cluster_by)
 
-        # Step 4: Run sector regression (with sector interactions)
+        # Step 6: Run sector regression (with sector interactions)
         sector_regression = self._run_sector_regression(bond_data, cluster_by)
 
-        # Step 5: Joint F-test for sector interactions
+        # Step 7: Joint F-test for sector interactions
         joint_test = self._test_joint_significance(bond_data, cluster_by)
 
-        # Step 6: Individual sector tests
+        # Step 8: Individual sector tests
         sector_tests = self._test_sector_predictions(sector_regression)
 
-        # Step 7: Diagnostics
+        # Step 9: Diagnostics
         diagnostics = self._compute_diagnostics(bond_data, sector_regression)
 
         return {
@@ -103,37 +122,103 @@ class SectorInteractionAnalysis:
             'diagnostics': diagnostics
         }
 
+    def _compute_spread_changes(self, bond_data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute percentage spread changes for each bond.
+
+        Args:
+            bond_data: DataFrame with 'oas', 'cusip' (or bond id), 'date'
+
+        Returns:
+            DataFrame with 'spread_change' and 'oas_lag' columns
+        """
+        # Sort by bond and date
+        bond_id_col = 'cusip' if 'cusip' in bond_data.columns else 'bond_id'
+        bond_data = bond_data.sort_values([bond_id_col, 'date'])
+
+        # Compute lagged spread within each bond
+        bond_data['oas_lag'] = bond_data.groupby(bond_id_col)['oas'].shift(1)
+
+        # Compute percentage spread change
+        bond_data['spread_change'] = (bond_data['oas'] - bond_data['oas_lag']) / bond_data['oas_lag']
+
+        # Remove NaN (first observation for each bond)
+        bond_data = bond_data.dropna(subset=['spread_change', 'oas_lag'])
+
+        # Remove extreme outliers (likely data errors)
+        bond_data = bond_data[bond_data['spread_change'].abs() <= 1.0]  # ±100%
+
+        return bond_data
+
+    def _compute_merton_scaled_factor(self, bond_data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute Merton-scaled DTS factor: λ^Merton × f_DTS
+
+        Args:
+            bond_data: DataFrame with spread changes
+
+        Returns:
+            DataFrame with lambda_merton, f_dts, and merton_scaled_factor columns
+        """
+        # Compute Merton lambda for each bond (based on lagged spread and maturity)
+        bond_data['lambda_merton'] = calculate_merton_lambda(
+            bond_data['time_to_maturity'].values,
+            bond_data['oas_lag'].values
+        )
+
+        # Compute index-level DTS factor (average percentage spread change per week)
+        index_factor = bond_data.groupby('date').agg(
+            f_dts=('spread_change', 'mean')
+        ).reset_index()
+
+        # Merge back to bond data
+        bond_data = bond_data.merge(index_factor, on='date', how='left')
+
+        # Compute Merton-scaled factor
+        bond_data['merton_scaled_factor'] = bond_data['lambda_merton'] * bond_data['f_dts']
+
+        return bond_data
+
     def _run_base_regression(
         self,
         bond_data: pd.DataFrame,
         cluster_by: str
     ) -> Dict:
         """
-        Run base regression: ln(s_it) = α + λ·T_it + ε_it
+        Run base regression: y_{i,t} = α + β_0 · [λ^Merton · f_DTS] + ε_{i,t}
+
+        This tests whether Merton-scaled DTS explains spread changes.
 
         Args:
-            bond_data: DataFrame with bond observations
+            bond_data: DataFrame with bond observations and merton_scaled_factor
             cluster_by: Clustering variable
 
         Returns:
             Dictionary with regression results
         """
         # Prepare data
-        df = bond_data[['oas', 'time_to_maturity', 'date', 'issuer_id']].dropna()
+        required_cols = ['spread_change', 'merton_scaled_factor', 'date']
+        if 'issuer_id' in bond_data.columns:
+            required_cols.append('issuer_id')
+
+        df = bond_data[required_cols].dropna()
 
         if len(df) < 100:
             return {'warning': 'Insufficient observations', 'n_obs': len(df)}
 
-        y = np.log(df['oas'].values)
-        X = df['time_to_maturity'].values
+        # Dependent variable: percentage spread change
+        y = df['spread_change'].values
+
+        # Independent variable: Merton-scaled DTS factor (reshape to 2D)
+        X = df['merton_scaled_factor'].values.reshape(-1, 1)
 
         # Cluster variable
         if cluster_by == 'week':
             cluster_var = df['date'].values
-        elif cluster_by == 'issuer':
+        elif cluster_by == 'issuer' and 'issuer_id' in df.columns:
             cluster_var = df['issuer_id'].values
         else:
-            raise ValueError("cluster_by must be 'week' or 'issuer'")
+            cluster_var = df['date'].values  # Default to week
 
         # Run regression with clustered SEs
         try:
@@ -145,18 +230,30 @@ class SectorInteractionAnalysis:
             )
 
             return {
-                'lambda': results['params'][1],
-                'lambda_se': results['se'][1],
-                'lambda_tstat': results['t_stats'][1],
-                'lambda_pvalue': results['p_values'][1],
+                'beta_0': results['params'][1],  # Coefficient on Merton-scaled factor
+                'beta_0_se': results['se'][1],
+                'beta_0_tstat': results['t_stats'][1],
+                'beta_0_pvalue': results['p_values'][1],
                 'alpha': results['params'][0],
                 'r_squared': results['r_squared'],
                 'n_obs': results['n_obs'],
-                'n_clusters': results['n_clusters']
+                'n_clusters': results['n_clusters'],
+                'interpretation': self._interpret_base_beta(results['params'][1], results['p_values'][1])
             }
 
         except Exception as e:
             return {'warning': f'Regression failed: {str(e)}'}
+
+    def _interpret_base_beta(self, beta: float, pvalue: float) -> str:
+        """Interpret the base regression coefficient."""
+        if 0.9 <= beta <= 1.1 and pvalue < 0.05:
+            return f"β_0 = {beta:.3f} ≈ 1: Merton-scaled DTS works well for base (Industrial) sector"
+        elif beta < 0.9:
+            return f"β_0 = {beta:.3f} < 1: Merton over-predicts spread sensitivity"
+        elif beta > 1.1:
+            return f"β_0 = {beta:.3f} > 1: Merton under-predicts spread sensitivity"
+        else:
+            return f"β_0 = {beta:.3f}: Merton-scaled DTS significant (p={pvalue:.4f})"
 
     def _run_sector_regression(
         self,
@@ -165,41 +262,47 @@ class SectorInteractionAnalysis:
     ) -> Dict:
         """
         Run sector regression with interactions:
-        ln(s_it) = α + λ·T_it + β_fin·(T × Financial) + β_util·(T × Utility) + β_energy·(T × Energy) + ε_it
+        y_{i,t} = α + β_0·[λ^Merton · f_DTS] +
+                  β_fin·[λ^Merton · f_DTS × Financial] +
+                  β_util·[λ^Merton · f_DTS × Utility] +
+                  β_energy·[λ^Merton · f_DTS × Energy] + ε_{i,t}
 
         Args:
-            bond_data: DataFrame with bond observations and sector dummies
+            bond_data: DataFrame with bond observations, sector dummies, and merton_scaled_factor
             cluster_by: Clustering variable
 
         Returns:
             Dictionary with regression results
         """
         # Prepare data
-        required_cols = ['oas', 'time_to_maturity', 'date', 'issuer_id',
+        required_cols = ['spread_change', 'merton_scaled_factor', 'date',
                          'sector_financial', 'sector_utility', 'sector_energy']
+        if 'issuer_id' in bond_data.columns:
+            required_cols.append('issuer_id')
+
         df = bond_data[required_cols].dropna()
 
         if len(df) < 100:
             return {'warning': 'Insufficient observations', 'n_obs': len(df)}
 
-        # Dependent variable
-        y = np.log(df['oas'].values)
+        # Dependent variable: percentage spread change
+        y = df['spread_change'].values
 
-        # Independent variables
-        T = df['time_to_maturity'].values
-        T_fin = T * df['sector_financial'].values
-        T_util = T * df['sector_utility'].values
-        T_energy = T * df['sector_energy'].values
+        # Independent variables: Merton-scaled factor and sector interactions
+        msf = df['merton_scaled_factor'].values
+        msf_fin = msf * df['sector_financial'].values
+        msf_util = msf * df['sector_utility'].values
+        msf_energy = msf * df['sector_energy'].values
 
-        X = np.column_stack([T, T_fin, T_util, T_energy])
+        X = np.column_stack([msf, msf_fin, msf_util, msf_energy])
 
         # Cluster variable
         if cluster_by == 'week':
             cluster_var = df['date'].values
-        elif cluster_by == 'issuer':
+        elif cluster_by == 'issuer' and 'issuer_id' in df.columns:
             cluster_var = df['issuer_id'].values
         else:
-            raise ValueError("cluster_by must be 'week' or 'issuer'")
+            cluster_var = df['date'].values
 
         # Run regression with clustered SEs
         try:
@@ -210,27 +313,35 @@ class SectorInteractionAnalysis:
                 add_constant=True
             )
 
+            # β_0 is sensitivity for Industrial (reference sector)
+            # β_0 + β_fin is sensitivity for Financial
+            # etc.
             return {
                 'alpha': results['params'][0],
-                'lambda': results['params'][1],  # Base maturity effect (Industrial)
-                'beta_financial': results['params'][2],  # Financial interaction
-                'beta_utility': results['params'][3],  # Utility interaction
-                'beta_energy': results['params'][4],  # Energy interaction
-                'lambda_se': results['se'][1],
+                'beta_0': results['params'][1],  # Base DTS sensitivity (Industrial)
+                'beta_financial': results['params'][2],  # Financial DEVIATION from base
+                'beta_utility': results['params'][3],  # Utility DEVIATION from base
+                'beta_energy': results['params'][4],  # Energy DEVIATION from base
+                'beta_0_se': results['se'][1],
                 'beta_financial_se': results['se'][2],
                 'beta_utility_se': results['se'][3],
                 'beta_energy_se': results['se'][4],
-                'lambda_tstat': results['t_stats'][1],
+                'beta_0_tstat': results['t_stats'][1],
                 'beta_financial_tstat': results['t_stats'][2],
                 'beta_utility_tstat': results['t_stats'][3],
                 'beta_energy_tstat': results['t_stats'][4],
-                'lambda_pvalue': results['p_values'][1],
+                'beta_0_pvalue': results['p_values'][1],
                 'beta_financial_pvalue': results['p_values'][2],
                 'beta_utility_pvalue': results['p_values'][3],
                 'beta_energy_pvalue': results['p_values'][4],
                 'r_squared': results['r_squared'],
                 'n_obs': results['n_obs'],
-                'n_clusters': results['n_clusters']
+                'n_clusters': results['n_clusters'],
+                # Derived: total sector sensitivities
+                'sensitivity_industrial': results['params'][1],
+                'sensitivity_financial': results['params'][1] + results['params'][2],
+                'sensitivity_utility': results['params'][1] + results['params'][3],
+                'sensitivity_energy': results['params'][1] + results['params'][4]
             }
 
         except Exception as e:
@@ -243,37 +354,43 @@ class SectorInteractionAnalysis:
     ) -> Dict:
         """
         Joint F-test: H0: β_fin = β_util = β_energy = 0
+        (All sectors have the same DTS sensitivity)
 
         Args:
-            bond_data: DataFrame with bond observations
+            bond_data: DataFrame with bond observations and merton_scaled_factor
             cluster_by: Clustering variable
 
         Returns:
             Dictionary with test results
         """
-        # Prepare data (same as sector regression)
-        required_cols = ['oas', 'time_to_maturity', 'date', 'issuer_id',
+        # Prepare data
+        required_cols = ['spread_change', 'merton_scaled_factor', 'date',
                          'sector_financial', 'sector_utility', 'sector_energy']
+        if 'issuer_id' in bond_data.columns:
+            required_cols.append('issuer_id')
+
         df = bond_data[required_cols].dropna()
 
         if len(df) < 100:
             return {'warning': 'Insufficient observations'}
 
-        y = np.log(df['oas'].values)
-        T = df['time_to_maturity'].values
-        T_fin = T * df['sector_financial'].values
-        T_util = T * df['sector_utility'].values
-        T_energy = T * df['sector_energy'].values
+        y = df['spread_change'].values
+        msf = df['merton_scaled_factor'].values
+        msf_fin = msf * df['sector_financial'].values
+        msf_util = msf * df['sector_utility'].values
+        msf_energy = msf * df['sector_energy'].values
 
         # Unrestricted model: includes sector interactions
-        X_unrestricted = np.column_stack([T, T_fin, T_util, T_energy])
+        X_unrestricted = np.column_stack([msf, msf_fin, msf_util, msf_energy])
         X_unrestricted = sm.add_constant(X_unrestricted)
 
         # Cluster variable
         if cluster_by == 'week':
             cluster_var = df['date'].values
-        else:
+        elif 'issuer_id' in df.columns:
             cluster_var = df['issuer_id'].values
+        else:
+            cluster_var = df['date'].values
 
         # Joint F-test on interaction terms (indices 2, 3, 4)
         try:
@@ -285,12 +402,13 @@ class SectorInteractionAnalysis:
             )
 
             return {
-                'test': 'H0: β_fin = β_util = β_energy = 0',
+                'test': 'H0: β_fin = β_util = β_energy = 0 (sectors have same DTS sensitivity)',
                 'f_statistic': test_results['f_statistic'],
                 'p_value': test_results['p_value'],
                 'df_numerator': test_results['df_numerator'],
                 'df_denominator': test_results['df_denominator'],
                 'reject_null': test_results['p_value'] < 0.05,
+                'sectors_differ': test_results['p_value'] < 0.05,
                 'interpretation': self._interpret_joint_test(test_results['p_value'])
             }
 
@@ -310,8 +428,8 @@ class SectorInteractionAnalysis:
     def _test_sector_predictions(self, sector_regression: Dict) -> Dict:
         """
         Test sector-specific predictions:
-        1. Financial: H0: β_fin ≤ 0 vs H1: β_fin > 0
-        2. Utility: H0: β_util ≥ 0 vs H1: β_util < 0
+        1. Financial: β_fin > 0 (amplifies market moves beyond Merton baseline)
+        2. Utility: β_util < 0 (dampens market moves below Merton baseline)
 
         Args:
             sector_regression: Results from _run_sector_regression
@@ -322,36 +440,76 @@ class SectorInteractionAnalysis:
         if 'warning' in sector_regression:
             return {'warning': sector_regression['warning']}
 
-        # Financial sector test (one-sided: β_fin > 0)
+        # Financial sector test (one-sided: β_fin > 0, meaning Financials move MORE than baseline)
         beta_fin = sector_regression['beta_financial']
         se_fin = sector_regression['beta_financial_se']
         t_fin = beta_fin / se_fin
         p_fin = 1 - stats.norm.cdf(t_fin)  # Right-tail
 
-        # Utility sector test (one-sided: β_util < 0)
+        # Utility sector test (one-sided: β_util < 0, meaning Utilities move LESS than baseline)
         beta_util = sector_regression['beta_utility']
         se_util = sector_regression['beta_utility_se']
         t_util = beta_util / se_util
         p_util = stats.norm.cdf(t_util)  # Left-tail
 
+        # Energy sector test (two-sided)
+        beta_energy = sector_regression['beta_energy']
+        se_energy = sector_regression['beta_energy_se']
+        t_energy = beta_energy / se_energy
+        p_energy = 2 * (1 - stats.norm.cdf(np.abs(t_energy)))
+
+        # Get total sensitivities
+        sens_ind = sector_regression.get('sensitivity_industrial', np.nan)
+        sens_fin = sector_regression.get('sensitivity_financial', np.nan)
+        sens_util = sector_regression.get('sensitivity_utility', np.nan)
+        sens_energy = sector_regression.get('sensitivity_energy', np.nan)
+
         return {
             'financial_test': {
-                'hypothesis': 'H0: β_fin ≤ 0 vs H1: β_fin > 0',
-                'beta': beta_fin,
+                'hypothesis': 'H0: β_fin ≤ 0 vs H1: β_fin > 0 (Financials amplify)',
+                'beta_deviation': beta_fin,
                 'se': se_fin,
                 't_statistic': t_fin,
                 'p_value': p_fin,
                 'reject_null': p_fin < 0.05,
-                'interpretation': f"Financial β = {beta_fin:.4f} {'is' if p_fin < 0.05 else 'is not'} significantly positive (p={p_fin:.4f})"
+                'total_sensitivity': sens_fin,
+                'interpretation': (
+                    f"Financial deviation = {beta_fin:.3f}: {'amplifies' if beta_fin > 0 else 'dampens'} "
+                    f"market moves (total sensitivity = {sens_fin:.3f}, p={p_fin:.4f})"
+                )
             },
             'utility_test': {
-                'hypothesis': 'H0: β_util ≥ 0 vs H1: β_util < 0',
-                'beta': beta_util,
+                'hypothesis': 'H0: β_util ≥ 0 vs H1: β_util < 0 (Utilities dampen)',
+                'beta_deviation': beta_util,
                 'se': se_util,
                 't_statistic': t_util,
                 'p_value': p_util,
                 'reject_null': p_util < 0.05,
-                'interpretation': f"Utility β = {beta_util:.4f} {'is' if p_util < 0.05 else 'is not'} significantly negative (p={p_util:.4f})"
+                'total_sensitivity': sens_util,
+                'interpretation': (
+                    f"Utility deviation = {beta_util:.3f}: {'dampens' if beta_util < 0 else 'amplifies'} "
+                    f"market moves (total sensitivity = {sens_util:.3f}, p={p_util:.4f})"
+                )
+            },
+            'energy_test': {
+                'hypothesis': 'H0: β_energy = 0 (Energy same as Industrial)',
+                'beta_deviation': beta_energy,
+                'se': se_energy,
+                't_statistic': t_energy,
+                'p_value': p_energy,
+                'reject_null': p_energy < 0.05,
+                'total_sensitivity': sens_energy,
+                'interpretation': (
+                    f"Energy deviation = {beta_energy:.3f} "
+                    f"(total sensitivity = {sens_energy:.3f}, p={p_energy:.4f})"
+                )
+            },
+            'summary': {
+                'industrial_baseline': sens_ind,
+                'financial_total': sens_fin,
+                'utility_total': sens_util,
+                'energy_total': sens_energy,
+                'need_sector_adjustment': (p_fin < 0.05 or p_util < 0.05 or p_energy < 0.05)
             }
         }
 
@@ -371,16 +529,21 @@ class SectorInteractionAnalysis:
             Dictionary with diagnostics
         """
         # Sector distribution
-        sector_dist = bond_data['sector'].value_counts()
+        sector_dist = bond_data['sector'].value_counts() if 'sector' in bond_data.columns else pd.Series()
 
         return {
             'n_observations': sector_regression.get('n_obs', 0),
             'n_clusters': sector_regression.get('n_clusters', 0),
+            'n_unique_bonds': bond_data['cusip'].nunique() if 'cusip' in bond_data.columns else bond_data['bond_id'].nunique() if 'bond_id' in bond_data.columns else np.nan,
+            'n_unique_weeks': bond_data['date'].nunique() if 'date' in bond_data.columns else np.nan,
+            'r_squared': sector_regression.get('r_squared', np.nan),
             'sector_distribution': sector_dist.to_dict(),
             'pct_industrial': 100.0 * sector_dist.get('Industrial', 0) / len(bond_data) if len(bond_data) > 0 else 0,
             'pct_financial': 100.0 * sector_dist.get('Financial', 0) / len(bond_data) if len(bond_data) > 0 else 0,
             'pct_utility': 100.0 * sector_dist.get('Utility', 0) / len(bond_data) if len(bond_data) > 0 else 0,
-            'pct_energy': 100.0 * sector_dist.get('Energy', 0) / len(bond_data) if len(bond_data) > 0 else 0
+            'pct_energy': 100.0 * sector_dist.get('Energy', 0) / len(bond_data) if len(bond_data) > 0 else 0,
+            'mean_merton_scaled_factor': bond_data['merton_scaled_factor'].mean() if 'merton_scaled_factor' in bond_data.columns else np.nan,
+            'mean_spread_change': bond_data['spread_change'].mean() if 'spread_change' in bond_data.columns else np.nan
         }
 
     def _empty_results(self, universe: str, reason: str) -> Dict:
@@ -409,8 +572,8 @@ class SectorInteractionAnalysis:
         Returns:
             Dictionary with comparison statistics
         """
-        ig_joint = ig_results['joint_test'].get('reject_null', False)
-        hy_joint = hy_results['joint_test'].get('reject_null', False)
+        ig_joint = ig_results['joint_test'].get('sectors_differ', False)
+        hy_joint = hy_results['joint_test'].get('sectors_differ', False)
 
         ig_fin = ig_results['sector_tests'].get('financial_test', {}).get('reject_null', False)
         hy_fin = hy_results['sector_tests'].get('financial_test', {}).get('reject_null', False)
@@ -418,15 +581,25 @@ class SectorInteractionAnalysis:
         ig_util = ig_results['sector_tests'].get('utility_test', {}).get('reject_null', False)
         hy_util = hy_results['sector_tests'].get('utility_test', {}).get('reject_null', False)
 
+        # Get baseline sensitivities
+        ig_base_beta = ig_results['base_regression'].get('beta_0', np.nan)
+        hy_base_beta = hy_results['base_regression'].get('beta_0', np.nan)
+
         return {
-            'ig_sectors_significant': ig_joint,
-            'hy_sectors_significant': hy_joint,
-            'both_sectors_significant': ig_joint and hy_joint,
-            'ig_financial_positive': ig_fin,
-            'hy_financial_positive': hy_fin,
-            'ig_utility_negative': ig_util,
-            'hy_utility_negative': hy_util,
-            'interpretation': self._interpret_ig_hy_comparison(ig_joint, hy_joint, ig_fin, hy_fin)
+            'ig_sectors_differ': ig_joint,
+            'hy_sectors_differ': hy_joint,
+            'both_sectors_differ': ig_joint and hy_joint,
+            'ig_financial_amplifies': ig_fin,
+            'hy_financial_amplifies': hy_fin,
+            'ig_utility_dampens': ig_util,
+            'hy_utility_dampens': hy_util,
+            'ig_base_beta': ig_base_beta,
+            'hy_base_beta': hy_base_beta,
+            'ig_base_near_1': 0.8 <= ig_base_beta <= 1.2 if not np.isnan(ig_base_beta) else False,
+            'hy_base_near_1': 0.8 <= hy_base_beta <= 1.2 if not np.isnan(hy_base_beta) else False,
+            'interpretation': self._interpret_ig_hy_comparison(
+                ig_joint, hy_joint, ig_fin, hy_fin, ig_base_beta, hy_base_beta
+            )
         }
 
     def _interpret_ig_hy_comparison(
@@ -434,17 +607,37 @@ class SectorInteractionAnalysis:
         ig_joint: bool,
         hy_joint: bool,
         ig_fin: bool,
-        hy_fin: bool
+        hy_fin: bool,
+        ig_base: float,
+        hy_base: float
     ) -> str:
         """Interpret IG vs HY comparison."""
-        if ig_joint and hy_joint:
-            return "Sector effects significant in both IG and HY - sectors matter"
-        elif ig_joint:
-            return "Sector effects significant only in IG"
-        elif hy_joint:
-            return "Sector effects significant only in HY"
+        parts = []
+
+        # Base beta interpretation
+        ig_base_ok = 0.8 <= ig_base <= 1.2 if not np.isnan(ig_base) else False
+        hy_base_ok = 0.8 <= hy_base <= 1.2 if not np.isnan(hy_base) else False
+
+        if ig_base_ok and hy_base_ok:
+            parts.append("Base Merton-scaled DTS works in both universes")
+        elif ig_base_ok:
+            parts.append(f"Base DTS works for IG (β={ig_base:.2f}) but not HY (β={hy_base:.2f})")
+        elif hy_base_ok:
+            parts.append(f"Base DTS works for HY (β={hy_base:.2f}) but not IG (β={ig_base:.2f})")
         else:
-            return "Sector effects not significant in either universe - sectors don't matter"
+            parts.append(f"Base DTS needs calibration in both (IG β={ig_base:.2f}, HY β={hy_base:.2f})")
+
+        # Sector effects
+        if ig_joint and hy_joint:
+            parts.append("Sector adjustments needed in both universes")
+        elif ig_joint:
+            parts.append("Sector adjustments needed in IG only")
+        elif hy_joint:
+            parts.append("Sector adjustments needed in HY only")
+        else:
+            parts.append("No sector adjustments needed")
+
+        return "; ".join(parts)
 
 
 def run_sector_analysis_both_universes(

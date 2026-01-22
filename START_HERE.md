@@ -271,34 +271,36 @@ dtsresearch/
 
 ### Stage 0: Evolved DTS Foundation (Three-Pronged Theoretical Validation)
 
-**Purpose**: Determine if Merton adequately describes maturity-spread relationships BEFORE testing variation
+**Purpose**: Determine if Merton adequately describes spread sensitivities to market shocks
 
 **Three Specifications**:
 
-1. **Specification 0.1: Bucket-Level Analysis**
+1. **Specification 0.1: Bucket-Level Time-Series Analysis**
    - Classify bonds into 72 buckets (8 ratings × 9 maturities)
-   - Run pooled regression per bucket: y_i,t = α^(k) + β^(k) · f_DTS,t + ε
-   - Compare β^(k) vs λ^Merton, test monotonicity across maturities
+   - Run time-series regression per bucket: y = Δs/s on f_DTS (index spread change)
+   - Compare empirical β to theoretical λ^Merton (test β/λ ratio ≈ 1)
+   - Test monotonicity: β should decrease with maturity (as Merton predicts)
    - Separate IG and HY universes
 
 2. **Specification 0.2: Within-Issuer Analysis**
-   - Use issuer-week fixed effects to isolate maturity effect
-   - Same issuer, different maturities → pure maturity sensitivity
+   - Regress spread changes on λ^Merton within issuer-weeks
+   - Same issuer, different maturities → controls for credit quality
+   - Test H0: β = 1 (Merton predicts coefficient equals 1)
    - Inverse-variance weighted pooling across issuer-weeks
    - Requires ≥3 bonds per issuer-week, ≥2 years TTM dispersion
 
 3. **Specification 0.3: Sector Interaction Analysis**
-   - Test if Financial, Utility, Energy sectors differ from Industrial (baseline)
-   - Sector dummies × f_DTS interactions
+   - Use Merton-scaled DTS factor (λ^Merton × f_DTS) as regressor
+   - Sector interactions: Financial, Utility, Energy vs Industrial (baseline)
    - Joint F-test + individual sector tests
-   - Identifies systematic sector heterogeneity
+   - Test if sector-specific total sensitivities ≈ 1
 
-4. **Five Decision Paths**:
-   - **Path 1**: Perfect Alignment → Standard Merton throughout
-   - **Path 2**: Sector Heterogeneity → Add sector adjustments
-   - **Path 3**: Weak Evidence → Proceed cautiously
-   - **Path 4**: Mixed Evidence → Model-free approaches, skip time-variation
-   - **Path 5**: Theory Fails → Skip Merton-based tests, purely empirical
+4. **Five Decision Paths** (based on β ≈ 1 criterion):
+   - **Path 1**: Perfect Alignment (β/λ ≈ 1 everywhere) → Standard Merton throughout
+   - **Path 2**: Sector Heterogeneity (β ≈ 1 but sectors differ) → Add sector adjustments
+   - **Path 3**: Weak Evidence (β in range but not tight) → Proceed cautiously
+   - **Path 4**: Mixed Evidence (conflicting across methods) → Model-free approaches
+   - **Path 5**: Theory Fails (β far from 1) → Skip Merton-based tests, purely empirical
 
 **Integration**: All Stages A-E check decision path and conditionally skip/modify analyses
 

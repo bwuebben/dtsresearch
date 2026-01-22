@@ -10,27 +10,31 @@ This project implements a multi-stage empirical research program to test whether
 
 ### ✅ Stage 0: Evolved DTS Foundation Analysis
 
-**Three-Pronged Theoretical Validation Framework** that determines whether Merton adequately describes maturity-spread relationships:
+**Three-Pronged Theoretical Validation Framework** that determines whether Merton adequately describes spread sensitivities:
 
-1. **Bucket-Level Analysis (Spec 0.1)**: Cross-sectional regression on 72 buckets (8 ratings × 9 maturities)
-   - Tests: λ > 0, monotonicity across maturities
+1. **Bucket-Level Analysis (Spec 0.1)**: Time-series regression of spread changes on DTS factor
+   - Regress y = Δs/s on f_DTS (index-level spread change) for each bucket
+   - Compare empirical β to theoretical λ^Merton
+   - Tests: β/λ ratio ≈ 1, monotonicity (β decreases with maturity)
    - Separate IG and HY universes
 
-2. **Within-Issuer Analysis (Spec 0.2)**: Issuer-week fixed effects
-   - Same issuer, different maturities → isolates maturity effect
+2. **Within-Issuer Analysis (Spec 0.2)**: Test β = 1 using within-issuer variation
+   - Regress spread changes on λ^Merton within issuer-weeks
+   - Same issuer, different maturities → controls for credit quality
+   - Tests H0: β = 1 (Merton predicts coefficient equals 1)
    - Inverse-variance weighted pooling across issuer-weeks
-   - Requires ≥3 bonds per issuer-week, ≥2 years dispersion
 
-3. **Sector Interaction Analysis (Spec 0.3)**: Tests if sectors differ systematically
-   - Financial, Utility, Energy vs Industrial (baseline)
+3. **Sector Interaction Analysis (Spec 0.3)**: Tests if sectors differ when using Merton-scaled factor
+   - Uses λ^Merton × f_DTS as regressor (Merton-scaled DTS factor)
+   - Sector interactions: Financial, Utility, Energy vs Industrial (baseline)
    - Joint F-test + individual sector tests
 
-**Five Decision Paths**:
-- **Path 1**: Perfect Alignment → standard specs throughout
-- **Path 2**: Sector Heterogeneity → add sector terms
-- **Path 3**: Weak Evidence → proceed cautiously
-- **Path 4**: Mixed Evidence → selective use
-- **Path 5**: Theory Fails → alternative models needed
+**Five Decision Paths** (based on β ≈ 1 criterion):
+- **Path 1**: Perfect Alignment (β/λ ≈ 1 across methods) → standard specs throughout
+- **Path 2**: Sector Heterogeneity (β ≈ 1 but sectors differ) → add sector terms
+- **Path 3**: Weak Evidence (β in range but not tight) → proceed cautiously
+- **Path 4**: Mixed Evidence (conflicting across methods) → selective use
+- **Path 5**: Theory Fails (β far from 1) → alternative models needed
 
 **Run**: `python run_stage0.py --start-date 2020-01-01 --end-date 2023-12-31` (~3 minutes)
 
@@ -286,17 +290,17 @@ Bonds are classified into buckets defined by:
 
 This creates ~72 IG buckets and ~72 HY buckets.
 
-### Pooled Regression
+### Bucket-Level Time-Series Regression
 
 For each bucket k, estimate:
 
 ```
-y_i,t = α^(k) + β^(k) · f_DTS,t + ε_i,t
+y_{i,t} = α^(k) + β^(k) · f_{DTS,t} + ε_{i,t}
 ```
 
 where:
-- `y_i,t = ΔS_i,t / S_i,t-1`: percentage spread change for bond i
-- `f_DTS,t = ΔS^index_t / S^index_t-1`: index-level percentage spread change
+- `y_{i,t} = Δs_{i,t} / s_{i,t-1}`: percentage spread change for bond i
+- `f_{DTS,t} = ΔS^index_t / S^index_t-1`: index-level percentage spread change (DTS factor)
 - `β^(k)`: empirical DTS sensitivity for bucket k
 
 Standard errors are clustered by week.
@@ -313,13 +317,13 @@ where:
 - `λ_T`: maturity adjustment factor (reference: 5y bond)
 - `λ_s`: credit quality adjustment factor (reference: 100 bps spread)
 
-Compare empirical β to theoretical λ.
+Compare empirical β to theoretical λ. The key test is whether β/λ ≈ 1.
 
 ### Statistical Tests
 
-1. **Level test**: H₀: β^(k) = λ^Merton for each bucket
-2. **Cross-maturity pattern**: Do short bonds have higher β than long bonds?
-3. **Regime pattern**: Does dispersion decline as spreads widen?
+1. **β = 1 test**: H₀: β^(k) = λ^Merton for each bucket (β/λ ratio ≈ 1)
+2. **Monotonicity test**: Does β decrease with maturity (as Merton predicts)?
+3. **Cross-method consistency**: Do bucket, within-issuer, and sector analyses agree?
 
 ## Output Deliverables
 

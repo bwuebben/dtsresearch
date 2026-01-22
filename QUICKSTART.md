@@ -176,10 +176,12 @@ pytest tests/test_merton.py -v
 ## Understand the Research Flow
 
 ```
-Stage 0: Five-Path Decision Framework
-   Three specs: Bucket-level, Within-issuer, Sector interaction
+Stage 0: Five-Path Decision Framework (based on β ≈ 1 criterion)
+   Three specs: Bucket-level (spread changes on DTS factor),
+                Within-issuer (spread changes on λ^Merton),
+                Sector interaction (Merton-scaled factor)
    ↓
-   Five Paths: 1=Perfect, 2=Sector, 3=Weak, 4=Mixed, 5=Fails
+   Five Paths: 1=Perfect (β≈1), 2=Sector, 3=Weak, 4=Mixed, 5=Fails
    ↓
 Stage A: Does cross-sectional variation exist?
    (Skips if Path 5, can reuse Stage 0 buckets if Path 1-2)
@@ -209,8 +211,8 @@ cat output/reports/stage0_summary.txt
 
 **Look for**:
 - Median β/λ ratio (should be 0.8-1.2 for theory to work)
-- Percentage in acceptable range (>70% is good)
-- Cross-maturity pattern (should match theory)
+- Within-issuer β (should be in 0.9-1.1, p-value for β=1 > 0.05)
+- Monotonicity (β should decrease with maturity as Merton predicts)
 
 ### 2. If Stage 0 Looks Good → Run Stage A
 

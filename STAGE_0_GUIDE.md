@@ -4,46 +4,49 @@
 
 Stage 0 is the foundational analysis that determines the appropriate modeling approach for subsequent stages. It implements three complementary analyses from the evolved paper methodology to assess whether the Merton structural model provides an adequate framework for Duration Times Spread (DTS) effects.
 
-**Key Question**: Does the Merton model adequately describe maturity-spread relationships in corporate bonds?
+**Key Question**: Does the Merton model adequately describe spread sensitivity to market-wide credit shocks?
 
 **Output**: Decision path (1-5) that guides specification choices in Stages A-E
 
 ## Three-Pronged Analysis
 
-### 1. Bucket-Level Cross-Sectional Analysis (Specification 0.1)
+### 1. Bucket-Level Time-Series Analysis (Specification 0.1)
 
-**Purpose**: Test basic Merton prediction across rating-maturity buckets
+**Purpose**: Test whether empirical spread sensitivities match Merton-predicted elasticities across rating-maturity buckets
 
-**Specification**:
+**Specification** (for each bucket k):
 ```
-ln(s_b) = α + λ·T_b + ε_b
+y_{i,t} = α^(k) + β^(k) · f_{DTS,t} + ε_{i,t}
 ```
 
 where:
-- `s_b` = average OAS in bucket b
-- `T_b` = average maturity in bucket b
+- `y_{i,t} = Δs_{i,t} / s_{i,t-1}`: percentage spread change for bond i
+- `f_{DTS,t} = ΔS^index_t / S^index_t-1`: index-level percentage spread change (DTS factor)
+- `β^(k)`: empirical DTS sensitivity for bucket k
 - Buckets = 8 rating groups × 9 maturity groups = 72 buckets
 
 **Implementation**: `src/dts_research/analysis/stage0_bucket.py`
 
 **Key Tests**:
-- H0: λ ≤ 0 vs H1: λ > 0 (Merton predicts λ > 0)
-- Monotonicity: Are spreads increasing in maturity within rating classes?
+- Compare empirical β^(k) to theoretical λ^Merton for each bucket
+- Test whether β/λ ratio is close to 1.0 (median within 0.8-1.2)
+- Monotonicity: Does β decrease with maturity within rating classes (as Merton predicts)?
 - Bucket population: Are we adequately covering the rating-maturity space?
 
-### 2. Within-Issuer Fixed Effects Analysis (Specification 0.2)
+### 2. Within-Issuer Analysis (Specification 0.2)
 
-**Purpose**: Control for common credit risk by using same issuer, different maturities
+**Purpose**: Test Merton prediction that spread sensitivity equals theoretical λ, using within-issuer variation to control for credit quality
 
 **Specification** (for each issuer-week):
 ```
-ln(s_it) = α_issuer-week + λ·T_it + ε_it
+Δs_{i,t} / s_{i,t-1} = α_{j,t} + β · λ^Merton_{i,t} + ε_{i,t}
 ```
 
 where:
-- Fixed effect `α_issuer-week` absorbs all common credit risk factors
-- Only variation is maturity across bonds from same issuer
-- Pooled estimate uses inverse-variance weighting across issuer-weeks
+- LHS: percentage spread change for bond i from issuer j at time t
+- `α_{j,t}`: issuer-week fixed effect (absorbs all common credit risk factors)
+- `λ^Merton_{i,t}`: Merton-predicted elasticity for bond i (function of maturity and spread)
+- `β`: coefficient on Merton lambda (should equal 1 if theory is correct)
 
 **Implementation**: `src/dts_research/analysis/stage0_within_issuer.py`
 
@@ -53,49 +56,57 @@ where:
 - Exclude bonds within 1 year of maturity (pull-to-par)
 
 **Key Tests**:
-- H0: λ ≤ 0 vs H1: λ > 0 (one-sided test)
+- H0: β = 1 vs H1: β ≠ 1 (Merton predicts β = 1)
+- Is pooled β within [0.9, 1.1]?
 - Distribution of issuer-week estimates
 - Consistency across time
 
 ### 3. Sector Interaction Analysis (Specification 0.3)
 
-**Purpose**: Test whether DTS effects vary by industry sector
+**Purpose**: Test whether spread sensitivities vary by industry sector when using Merton-scaled DTS factor
 
 **Specification**:
 ```
-ln(s_it) = α + λ·T_it + β_F·(T_it × Financial_i) + β_U·(T_it × Utility_i)
-           + β_E·(T_it × Energy_i) + ε_it
+y_{i,t} = α + β_0 · (λ^Merton_i × f_{DTS,t})
+          + β_F · (Financial_i × λ^Merton_i × f_{DTS,t})
+          + β_U · (Utility_i × λ^Merton_i × f_{DTS,t})
+          + β_E · (Energy_i × λ^Merton_i × f_{DTS,t}) + ε_{i,t}
 ```
 
-where sectors are:
-- Financial (banks, insurance, REITs)
-- Utility (electric, gas, water)
-- Energy (oil & gas, coal, renewable)
-- Industrial (baseline - all other firms)
+where:
+- `y_{i,t}`: percentage spread change
+- `λ^Merton_i × f_{DTS,t}`: Merton-scaled DTS factor
+- Sectors: Financial, Utility, Energy vs Industrial (baseline)
+- `β_0`: baseline sensitivity (Industrial sector)
+- `β_F, β_U, β_E`: sector-specific deviations from baseline
 
 **Implementation**: `src/dts_research/analysis/stage0_sector.py`
 
 **Key Tests**:
-- Joint test: H0: β_F = β_U = β_E = 0 (sectors don't matter)
-- Individual sector effects
-- Sector-specific λ estimates
+- Joint test: H0: β_F = β_U = β_E = 0 (sectors don't differ)
+- Individual sector tests: Does any sector significantly deviate?
+- Sector-specific total sensitivities: β_0 + β_sector ≈ 1?
 
 ## Decision Framework
 
 Stage 0 synthesizes the three analyses into one of five decision paths:
 
 ### Path 1: Perfect Alignment
-- **Criteria**: Bucket λ > 0 (p < 0.05), Within λ > 0 (p < 0.05), Monotonic, Sectors don't matter
-- **Interpretation**: Merton model works perfectly
+- **Criteria**:
+  - Bucket β/λ ratio median in [0.8, 1.2]
+  - Within-issuer β in [0.9, 1.1], p-value for β=1 > 0.05
+  - Monotonicity holds
+  - Sectors don't differ significantly
+- **Interpretation**: Merton model works well
 - **Action**: Proceed with standard DTS specifications in all stages
 
 ### Path 2: Works with Sector Heterogeneity
-- **Criteria**: Base effects positive and significant, but sectors matter
+- **Criteria**: Base effects validate theory (β ≈ 1), but sectors differ significantly
 - **Interpretation**: Merton model works but needs sector adjustments
 - **Action**: Add sector interactions throughout analysis
 
 ### Path 3: Weak but Present
-- **Criteria**: Effects in right direction but weak (p < 0.10) or inconsistent
+- **Criteria**: Effects in right direction but weak (β in [0.7, 1.3] but outside [0.9, 1.1])
 - **Interpretation**: Merton model weakly supported
 - **Action**: Proceed cautiously, report robustness extensively
 
@@ -105,7 +116,7 @@ Stage 0 synthesizes the three analyses into one of five decision paths:
 - **Action**: Use supported specifications, avoid unsupported ones
 
 ### Path 5: Theory Fails
-- **Criteria**: Non-monotonic, wrong sign, or no significance
+- **Criteria**: β significantly different from 1, non-monotonic, or wrong patterns
 - **Interpretation**: Merton model inadequate
 - **Action**: Consider alternative models (reduced-form, rating-based factors)
 
@@ -115,31 +126,31 @@ Stage 0 synthesizes the three analyses into one of five decision paths:
 
 ### Figures (10 total)
 
-1. **Bucket Characteristics Scatter**: Spread vs maturity by rating class
-2. **Cross-Sectional Regression Fit**: Bucket regression with confidence bands
-3. **Maturity Monotonicity**: Box plots of spreads by maturity bucket
-4. **Within-Issuer λ Distribution**: Histogram of issuer-week estimates
-5. **Within-Issuer λ Time Series**: Evolution of pooled estimate over time
-6. **Sector Interaction Coefficients**: Bar chart of sector effects
-7. **Sector-Specific λ Comparison**: Forest plot of sector-specific estimates
-8. **Decision Path Comparison**: IG vs HY decision paths
-9. **λ Estimates Comparison**: Three methods side-by-side
-10. **Diagnostic Dashboard**: 2×3 grid with all key diagnostics
+1. **Bucket Beta vs Lambda Scatter**: Empirical β vs theoretical λ by bucket
+2. **Beta Heatmap**: Heatmap of β across rating-maturity grid
+3. **Beta Distribution**: Distribution of β/λ ratios
+4. **Within-Issuer Coefficients**: Maturity coefficient estimates
+5. **Within-Issuer Weights**: Inverse-variance weights by issuer-week
+6. **Within-Issuer Distribution**: Distribution of issuer-week β estimates
+7. **Sector by Maturity**: Sector effects across maturity buckets
+8. **Sector Effects**: Bar chart of sector-specific sensitivities
+9. **Sector F-test**: Visualization of joint test results
+10. **Decision Summary**: Decision framework visualization
 
 ### Tables (17 total)
 
 **Bucket Analysis** (6 tables):
-- Table 1-2: Bucket characteristics (IG, HY)
-- Table 3-4: Bucket regression results (IG, HY)
+- Table 1-2: Bucket characteristics and β estimates (IG, HY)
+- Table 3-4: β vs λ comparison and ratio analysis (IG, HY)
 - Table 5-6: Monotonicity tests (IG, HY)
 
 **Within-Issuer Analysis** (4 tables):
 - Table 7-8: Within-issuer summary statistics (IG, HY)
-- Table 9-10: Pooled estimates and hypothesis tests (IG, HY)
+- Table 9-10: Pooled β estimates and hypothesis tests for β=1 (IG, HY)
 
 **Sector Analysis** (4 tables):
 - Table 11-12: Sector regression results (IG, HY)
-- Table 13-14: Sector hypothesis tests (IG, HY)
+- Table 13-14: Sector hypothesis tests and total sensitivities (IG, HY)
 
 **Synthesis** (3 tables):
 - Table 15-16: Decision paths and recommendations (IG, HY)
@@ -147,7 +158,7 @@ Stage 0 synthesizes the three analyses into one of five decision paths:
 
 ### Summary Report
 
-`STAGE_0_SUMMARY.txt` contains:
+`stage0_summary.txt` contains:
 - Decision paths for IG and HY
 - Key statistics from all three analyses
 - Rationale for each decision
@@ -169,14 +180,15 @@ python run_stage0.py \
 
 ```python
 from dts_research.data.loader import BondDataLoader
-from dts_research.analysis.stage0_bucket import run_bucket_analysis_both_universes
-from dts_research.analysis.stage0_within_issuer import run_within_issuer_analysis_both_universes
-from dts_research.analysis.stage0_sector import run_sector_analysis_both_universes
-from dts_research.analysis.stage0_synthesis import run_stage0_synthesis
+from dts_research.analysis.stage0_bucket import BucketLevelAnalysis
+from dts_research.analysis.stage0_within_issuer import WithinIssuerAnalysis
+from dts_research.analysis.stage0_sector import SectorInteractionAnalysis
+from dts_research.analysis.stage0_synthesis import Stage0Synthesis
 
 # Load data
 loader = BondDataLoader()
-bond_data = loader.load_bond_data('2020-01-01', '2023-12-31')
+bond_data = loader.generate_mock_data('2020-01-01', '2023-12-31', n_bonds=500)
+index_data = loader.generate_mock_index_data('2020-01-01', '2023-12-31')
 
 # Add sector classification and issuer identification
 from dts_research.data.sector_classification import SectorClassifier
@@ -188,20 +200,24 @@ bond_data = classifier.add_sector_dummies(bond_data)
 bond_data = add_issuer_identification(bond_data)
 
 # Run analyses
-bucket_results = run_bucket_analysis_both_universes(bond_data)
-within_results = run_within_issuer_analysis_both_universes(bond_data)
-sector_results = run_sector_analysis_both_universes(bond_data)
+bucket_analyzer = BucketLevelAnalysis()
+bucket_results = bucket_analyzer.run_bucket_analysis(bond_data, universe='IG')
 
-# Synthesize
-synthesis = run_stage0_synthesis(
-    bucket_results['IG'], bucket_results['HY'],
-    within_results['IG'], within_results['HY'],
-    sector_results['IG'], sector_results['HY']
+within_analyzer = WithinIssuerAnalysis()
+within_results = within_analyzer.run_within_issuer_analysis(bond_data, universe='IG')
+
+sector_analyzer = SectorInteractionAnalysis()
+sector_results = sector_analyzer.run_sector_analysis(bond_data, universe='IG')
+
+# Synthesize results
+synthesizer = Stage0Synthesis()
+synthesis = synthesizer.synthesize_results(
+    bucket_results, within_results, sector_results, universe='IG'
 )
 
 # Check decision path
-print(f"IG Decision: Path {synthesis['IG']['decision_path']}")
-print(f"HY Decision: Path {synthesis['HY']['decision_path']}")
+print(f"Decision: Path {synthesis['decision_path']} - {synthesis['path_name']}")
+print(f"Rationale: {synthesis['rationale']}")
 ```
 
 ## Data Requirements
@@ -261,13 +277,13 @@ SECTOR_MAPPING = {
 ### When to Trust Stage 0 Results
 
 **Strong Evidence** (Paths 1-2):
-- Consistent signs across all three methods
-- Statistical significance (p < 0.05) in multiple tests
-- Monotonicity clearly present
+- β/λ ratio median close to 1.0 across methods
+- Statistical tests fail to reject β = 1
+- Monotonicity clearly present (β decreasing with maturity)
 - Large number of populated buckets and issuer-weeks
 
 **Weak Evidence** (Path 3):
-- Right direction but weak significance (p < 0.10)
+- Right direction but β outside [0.9, 1.1]
 - Some monotonicity but not consistent
 - Limited sample in some buckets/issuers
 
@@ -277,9 +293,9 @@ SECTOR_MAPPING = {
 - May indicate specific specification issues
 
 **Theory Failure** (Path 5):
-- Wrong signs (λ < 0)
-- Non-monotonic patterns
-- No statistical significance
+- β significantly different from 1
+- Non-monotonic patterns (β increasing with maturity)
+- No statistical relationship
 - Time to consider alternative models
 
 ### Common Issues and Solutions
@@ -287,7 +303,7 @@ SECTOR_MAPPING = {
 **Issue 1: Sparse buckets**
 - **Symptom**: Many empty buckets, especially in tails
 - **Solution**: Use coarser bucket grid or focus on populated regions
-- **Impact**: Reduces precision of bucket-level λ estimate
+- **Impact**: Reduces precision of bucket-level estimates
 
 **Issue 2: Few multi-bond issuers**
 - **Symptom**: Low issuer-week count in within-issuer analysis
@@ -308,8 +324,8 @@ SECTOR_MAPPING = {
 
 After completing Stage 0:
 
-1. **Review Summary**: Check `STAGE_0_SUMMARY.txt` for decision paths
-2. **Examine Diagnostics**: Look at Figure 10 (diagnostic dashboard)
+1. **Review Summary**: Check `stage0_summary.txt` for decision paths
+2. **Examine Diagnostics**: Look at Figure 10 (decision summary)
 3. **Validate Results**: Ensure populated buckets and adequate sample
 4. **Determine Path**: Use decision path to guide Stages A-E
 
@@ -357,14 +373,20 @@ src/dts_research/
 
 ## Testing
 
+Run Stage 0 tests:
+
+```bash
+pytest tests/test_stage0_analysis.py -v
+```
+
 Run Stage 0 with mock data:
 
 ```bash
 python run_stage0.py \
     --start-date 2022-01-01 \
-    --end-date 2022-02-28 \
+    --end-date 2023-12-31 \
     --output-dir output/stage0_test \
     --verbose
 ```
 
-This generates 2 months of synthetic data with 500 bonds across 211 multi-bond issuers.
+This generates synthetic data with 500 bonds across multi-bond issuers and runs the complete three-pronged analysis.

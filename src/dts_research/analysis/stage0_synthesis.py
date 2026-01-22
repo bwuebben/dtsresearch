@@ -2,18 +2,18 @@
 Stage 0: Synthesis and Decision Framework
 
 Combines results from three analyses to determine best modeling path:
-1. Bucket-level analysis → Tests cross-sectional λ and monotonicity
-2. Within-issuer analysis → Tests λ > 0 (Merton prediction)
-3. Sector analysis → Tests for sector heterogeneity
+1. Bucket-level analysis → Tests if empirical β ≈ theoretical λ^Merton
+2. Within-issuer analysis → Tests if β ≈ 1 (Merton cross-maturity predictions)
+3. Sector analysis → Tests for sector-specific DTS sensitivities
 
-Decision Framework (5 paths):
-- Path 1: Standard DTS (λ > 0, monotonic, no sectors)
-- Path 2: Pure Merton (λ consistent with theory, use calibrated λ)
-- Path 3: Calibrated Merton (adjust λ to data)
-- Path 4: Merton + Sectors (significant sector effects)
-- Path 5: Theory Fails (λ ≤ 0 or non-monotonic, use alternative model)
+Decision Framework (5 paths based on whether β ≈ 1):
+- Path 1: Standard DTS (β ≈ 1 everywhere, no sectors)
+- Path 2: Pure Merton (β ≈ 1, use theoretical λ tables)
+- Path 3: Calibrated Merton (β consistent but ≠ 1, need scaling)
+- Path 4: Merton + Sectors (significant sector deviations)
+- Path 5: Theory Fails (β not positive or non-monotonic patterns)
 
-Based on Section 2.4 from the paper.
+Based on Section 4.5 from the paper.
 """
 
 import pandas as pd
@@ -27,16 +27,18 @@ class Stage0Synthesis:
 
     Combines bucket-level, within-issuer, and sector analyses to determine
     the optimal modeling path for Stages A-E.
+
+    Key test: Does β ≈ 1? (Not just: Is λ > 0?)
     """
 
     def __init__(self):
         """Initialize synthesis."""
         self.decision_paths = {
-            1: "Standard DTS",
-            2: "Pure Merton (calibrated λ)",
-            3: "Calibrated Merton (data-driven λ)",
-            4: "Merton + Sectors",
-            5: "Theory Fails (alternative model)"
+            1: "Standard DTS (theory works well)",
+            2: "Pure Merton (use theoretical λ tables)",
+            3: "Calibrated Merton (scale β to data)",
+            4: "Merton + Sectors (sector-specific adjustments)",
+            5: "Theory Fails (consider alternative models)"
         }
 
     def synthesize_results(
@@ -104,54 +106,64 @@ class Stage0Synthesis:
         Returns:
             Dictionary with key statistics
         """
-        # Bucket-level statistics
-        bucket_lambda = bucket_results.get('regression_results', {}).get('lambda', np.nan)
-        bucket_pvalue = bucket_results.get('regression_results', {}).get('lambda_pvalue', np.nan)
-        bucket_r2 = bucket_results.get('regression_results', {}).get('r_squared', np.nan)
+        # Bucket-level statistics (β/λ ratio should be ≈ 1)
+        summary_stats = bucket_results.get('summary_statistics', {})
+        bucket_median_ratio = summary_stats.get('median_beta_lambda_ratio', np.nan)
+        bucket_pct_within_20 = summary_stats.get('pct_within_20pct', 0)
+        bucket_median_beta = summary_stats.get('median_beta', np.nan)
         monotonic = bucket_results.get('monotonicity_test', {}).get('overall_monotonic', False)
         pct_monotonic = bucket_results.get('monotonicity_test', {}).get('pct_monotonic_groups', 0)
 
-        # Within-issuer statistics
-        within_lambda = within_issuer_results.get('pooled_estimate', {}).get('pooled_estimate', np.nan)
-        within_se = within_issuer_results.get('pooled_estimate', {}).get('pooled_se', np.nan)
-        within_positive = within_issuer_results.get('hypothesis_test', {}).get('reject_null', False)
-        within_pvalue = within_issuer_results.get('hypothesis_test', {}).get('p_value', np.nan)
+        # Within-issuer statistics (β should be ≈ 1)
+        pooled = within_issuer_results.get('pooled_estimate', {})
+        within_beta = pooled.get('pooled_beta', np.nan)
+        within_beta_se = pooled.get('pooled_beta_se', np.nan)
+        hyp_test = within_issuer_results.get('hypothesis_test', {})
+        within_validates = hyp_test.get('merton_validates', False)
+        within_beta_in_range = hyp_test.get('beta_in_range_0_9_1_1', False)
+        within_pvalue_eq_1 = hyp_test.get('p_value_beta_equals_1', np.nan)
 
         # Sector statistics
-        base_lambda = sector_results.get('base_regression', {}).get('lambda', np.nan)
-        sector_lambda = sector_results.get('sector_regression', {}).get('lambda', np.nan)
-        sectors_significant = sector_results.get('joint_test', {}).get('reject_null', False)
+        base_beta = sector_results.get('base_regression', {}).get('beta_0', np.nan)
+        sectors_differ = sector_results.get('joint_test', {}).get('sectors_differ', False)
         sector_pvalue = sector_results.get('joint_test', {}).get('p_value', np.nan)
-        fin_positive = sector_results.get('sector_tests', {}).get('financial_test', {}).get('reject_null', False)
-        util_negative = sector_results.get('sector_tests', {}).get('utility_test', {}).get('reject_null', False)
+        sector_tests = sector_results.get('sector_tests', {})
+        fin_amplifies = sector_tests.get('financial_test', {}).get('reject_null', False)
+        util_dampens = sector_tests.get('utility_test', {}).get('reject_null', False)
+        need_sector_adj = sector_tests.get('summary', {}).get('need_sector_adjustment', False)
 
         return {
-            'bucket_lambda': bucket_lambda,
-            'bucket_pvalue': bucket_pvalue,
-            'bucket_r2': bucket_r2,
+            # Bucket-level
+            'bucket_median_ratio': bucket_median_ratio,
+            'bucket_pct_within_20': bucket_pct_within_20,
+            'bucket_median_beta': bucket_median_beta,
             'monotonic': monotonic,
             'pct_monotonic': pct_monotonic,
-            'within_lambda': within_lambda,
-            'within_se': within_se,
-            'within_positive': within_positive,
-            'within_pvalue': within_pvalue,
-            'base_lambda': base_lambda,
-            'sector_lambda': sector_lambda,
-            'sectors_significant': sectors_significant,
+            # Within-issuer
+            'within_beta': within_beta,
+            'within_beta_se': within_beta_se,
+            'within_validates': within_validates,
+            'within_beta_in_range': within_beta_in_range,
+            'within_pvalue_eq_1': within_pvalue_eq_1,
+            # Sector
+            'base_beta': base_beta,
+            'sectors_differ': sectors_differ,
             'sector_pvalue': sector_pvalue,
-            'financial_positive': fin_positive,
-            'utility_negative': util_negative
+            'financial_amplifies': fin_amplifies,
+            'utility_dampens': util_dampens,
+            'need_sector_adjustment': need_sector_adj
         }
 
     def _evaluate_criteria(self, stats: Dict) -> Dict:
         """
         Evaluate decision criteria based on statistics.
 
-        Criteria:
-        1. λ > 0: At least one analysis shows significantly positive λ
-        2. Monotonic: Bucket analysis shows monotonic pattern
-        3. Consistent: Bucket and within-issuer λ are similar
+        Criteria (based on testing β ≈ 1, not λ > 0):
+        1. β ≈ 1 at bucket level: Median β/λ ratio in [0.9, 1.1]
+        2. β ≈ 1 at within-issuer level: Pooled β in [0.9, 1.1]
+        3. Monotonic: β decreases with maturity as Merton predicts
         4. Sectors matter: Sector interactions are significant
+        5. Consistent: Bucket and within-issuer analyses agree
 
         Args:
             stats: Key statistics dictionary
@@ -159,44 +171,60 @@ class Stage0Synthesis:
         Returns:
             Dictionary with boolean criteria
         """
-        # Criterion 1: λ > 0
-        lambda_positive = (
-            stats['within_positive'] or
-            (not np.isnan(stats['bucket_lambda']) and stats['bucket_lambda'] > 0 and stats['bucket_pvalue'] < 0.05) or
-            (not np.isnan(stats['base_lambda']) and stats['base_lambda'] > 0)
+        # Criterion 1: β ≈ 1 at bucket level (ratio of empirical β to theoretical λ)
+        bucket_ratio = stats['bucket_median_ratio']
+        bucket_beta_near_1 = (
+            not np.isnan(bucket_ratio) and
+            0.9 <= bucket_ratio <= 1.1 and
+            stats['bucket_pct_within_20'] >= 60  # At least 60% of buckets fit
         )
 
-        # Criterion 2: Monotonic
+        # Criterion 2: β ≈ 1 at within-issuer level
+        within_beta = stats['within_beta']
+        within_beta_near_1 = (
+            not np.isnan(within_beta) and
+            0.9 <= within_beta <= 1.1 and
+            (np.isnan(stats['within_pvalue_eq_1']) or stats['within_pvalue_eq_1'] > 0.10)
+        )
+
+        # Criterion 3: Monotonic (β decreases with maturity)
         monotonic = stats['monotonic']
 
-        # Criterion 3: Consistent λ across analyses
-        if not np.isnan(stats['bucket_lambda']) and not np.isnan(stats['within_lambda']):
-            # Check if estimates are within 2 standard errors
-            diff = abs(stats['bucket_lambda'] - stats['within_lambda'])
-            threshold = 2 * stats['within_se'] if not np.isnan(stats['within_se']) else 0.1
-            consistent = diff < threshold
-        else:
-            consistent = False  # Can't assess if data missing
-
         # Criterion 4: Sectors matter
-        sectors_matter = stats['sectors_significant']
+        sectors_matter = stats['sectors_differ'] or stats['need_sector_adjustment']
+
+        # Criterion 5: Analyses are consistent
+        if not np.isnan(bucket_ratio) and not np.isnan(within_beta):
+            # Both should be near 1, or both should deviate in same direction
+            bucket_ok = 0.8 <= bucket_ratio <= 1.2
+            within_ok = 0.8 <= within_beta <= 1.2
+            consistent = bucket_ok and within_ok
+        else:
+            consistent = False
+
+        # Criterion 6: Base sector β ≈ 1
+        base_beta = stats['base_beta']
+        base_beta_near_1 = not np.isnan(base_beta) and 0.8 <= base_beta <= 1.2
 
         return {
-            'lambda_positive': lambda_positive,
+            'bucket_beta_near_1': bucket_beta_near_1,
+            'within_beta_near_1': within_beta_near_1,
             'monotonic': monotonic,
-            'consistent_lambda': consistent,
-            'sectors_matter': sectors_matter
+            'sectors_matter': sectors_matter,
+            'consistent': consistent,
+            'base_beta_near_1': base_beta_near_1,
+            'theory_validated': bucket_beta_near_1 and within_beta_near_1 and monotonic
         }
 
     def _determine_path(self, criteria: Dict, stats: Dict) -> Tuple[int, str]:
         """
         Determine decision path based on criteria.
 
-        Decision tree:
-        1. If λ ≤ 0 or non-monotonic → Path 5 (Theory Fails)
+        Decision tree (based on β ≈ 1, not λ > 0):
+        1. If patterns wrong (non-monotonic or β far from 1) → Path 5 (Theory Fails)
         2. If sectors significant → Path 4 (Merton + Sectors)
-        3. If consistent and monotonic → Path 1 (Standard DTS)
-        4. If positive but inconsistent → Path 3 (Calibrated Merton)
+        3. If β ≈ 1 everywhere → Path 1 (Standard DTS) or Path 2 (Pure Merton)
+        4. If β consistent but ≠ 1 → Path 3 (Calibrated Merton)
         5. Default → Path 2 (Pure Merton)
 
         Args:
@@ -206,30 +234,40 @@ class Stage0Synthesis:
         Returns:
             Tuple of (path_number, rationale)
         """
-        # Path 5: Theory fails
-        if not criteria['lambda_positive']:
-            return (5, "λ is not significantly positive - Merton model fails. Consider alternative models.")
+        within_beta = stats['within_beta']
+        bucket_ratio = stats['bucket_median_ratio']
 
+        # Path 5: Theory fails
         if not criteria['monotonic']:
-            return (5, "λ is non-monotonic across maturity - Merton model fails. Consider alternative models.")
+            return (5, "β does NOT decrease with maturity as Merton predicts - theory fails")
+
+        # Check if β is wildly off (not just ≠ 1, but totally wrong direction or magnitude)
+        if not np.isnan(within_beta) and (within_beta < 0 or within_beta > 2.0):
+            return (5, f"Within-issuer β = {within_beta:.2f} is far from 1 - theory substantially fails")
+
+        if not np.isnan(bucket_ratio) and (bucket_ratio < 0.5 or bucket_ratio > 2.0):
+            return (5, f"Bucket β/λ ratio = {bucket_ratio:.2f} is far from 1 - theory substantially fails")
 
         # Path 4: Sectors matter
         if criteria['sectors_matter']:
-            fin_msg = "Financial sector has positive λ" if stats['financial_positive'] else ""
-            util_msg = "Utility sector has negative λ" if stats['utility_negative'] else ""
-            sector_msg = " and ".join([m for m in [fin_msg, util_msg] if m])
-            return (4, f"Sector interactions are significant. {sector_msg}. Use Merton + Sectors model.")
+            fin_msg = "Financials amplify" if stats['financial_amplifies'] else ""
+            util_msg = "Utilities dampen" if stats['utility_dampens'] else ""
+            sector_msg = ", ".join([m for m in [fin_msg, util_msg] if m]) or "sectors differ"
+            return (4, f"Sector effects significant: {sector_msg}. Use Merton + Sectors.")
 
-        # Path 1: Standard DTS
-        if criteria['consistent_lambda'] and criteria['monotonic']:
-            return (1, f"λ is positive (≈{stats['within_lambda']:.4f}), monotonic, and consistent across analyses. Use standard DTS.")
+        # Path 1 or 2: Theory works well
+        if criteria['theory_validated']:
+            if criteria['within_beta_near_1'] and criteria['bucket_beta_near_1']:
+                return (1, f"β ≈ 1 validated: within-issuer β = {within_beta:.2f}, bucket ratio = {bucket_ratio:.2f}. Use standard DTS.")
+            else:
+                return (2, f"Theory works but not perfectly: within-issuer β = {within_beta:.2f}. Use Pure Merton tables.")
 
-        # Path 3: Calibrated Merton
-        if criteria['lambda_positive'] and not criteria['consistent_lambda']:
-            return (3, f"λ is positive but inconsistent between bucket ({stats['bucket_lambda']:.4f}) and within-issuer ({stats['within_lambda']:.4f}). Calibrate λ to data.")
+        # Path 3: Theory works but needs calibration
+        if criteria['consistent'] and not criteria['theory_validated']:
+            return (3, f"β consistent but ≠ 1 (within-issuer: {within_beta:.2f}, bucket ratio: {bucket_ratio:.2f}). Calibrate β to data.")
 
-        # Path 2: Pure Merton (default)
-        return (2, "λ is positive. Use pure Merton calibration with theoretical λ as starting point.")
+        # Path 2: Default - use Merton with caution
+        return (2, f"Partial validation. Use Pure Merton as starting point (within-issuer β = {within_beta:.2f}).")
 
     def _generate_recommendations(
         self,
@@ -248,50 +286,55 @@ class Stage0Synthesis:
         Returns:
             Dictionary with recommendations for each stage
         """
-        if path == 1:  # Standard DTS
+        within_beta = stats['within_beta']
+        bucket_ratio = stats['bucket_median_ratio']
+        base_beta = stats['base_beta']
+
+        if path == 1:  # Standard DTS (theory validated)
             return {
-                'stage_A': f"Use bucket λ = {stats['bucket_lambda']:.4f} as initial estimate",
-                'stage_B': "Proceed with standard DTS specification (no sector adjustments)",
-                'stage_C': "Test for time-variation in λ",
+                'stage_A': f"Use Merton λ tables directly (β ≈ 1 validated: {within_beta:.2f})",
+                'stage_B': "Proceed with standard DTS specification (no adjustments needed)",
+                'stage_C': "Test for time-variation in base sensitivity",
                 'stage_D': "Standard robustness checks",
-                'stage_E': "Use Specification 1 (Standard DTS)"
+                'stage_E': "Use Specification 1 (Standard Merton DTS)"
             }
 
         elif path == 2:  # Pure Merton
             return {
-                'stage_A': "Use Merton calibration: λ = f(leverage, volatility, risk-free rate)",
-                'stage_B': "Proceed with Merton-calibrated λ (no sector adjustments)",
-                'stage_C': "Test for time-variation in leverage/volatility inputs",
-                'stage_D': "Robustness to calibration parameters",
+                'stage_A': f"Use Merton λ tables (β = {within_beta:.2f}, close enough)",
+                'stage_B': "Proceed with Merton-based λ (minor scaling may help)",
+                'stage_C': "Test for time-variation in sensitivity",
+                'stage_D': "Robustness to λ table interpolation",
                 'stage_E': "Use Specification 2 (Pure Merton)"
             }
 
         elif path == 3:  # Calibrated Merton
-            avg_lambda = np.nanmean([stats['bucket_lambda'], stats['within_lambda'], stats['base_lambda']])
+            # Compute calibration scaling factor
+            scaling = within_beta if not np.isnan(within_beta) else bucket_ratio if not np.isnan(bucket_ratio) else 1.0
             return {
-                'stage_A': f"Use data-calibrated λ = {avg_lambda:.4f} (average of analyses)",
-                'stage_B': "Proceed with calibrated λ (no sector adjustments)",
-                'stage_C': "Test for time-variation in data-calibrated λ",
+                'stage_A': f"Use λ_prod = λ_Merton × {scaling:.2f} (calibrated scaling)",
+                'stage_B': f"Apply scaling factor β = {scaling:.2f} to Merton predictions",
+                'stage_C': "Test for time-variation in calibration factor",
                 'stage_D': "Robustness to alternative calibration methods",
                 'stage_E': "Use Specification 3 (Calibrated Merton)"
             }
 
         elif path == 4:  # Merton + Sectors
             return {
-                'stage_A': f"Use sector-specific λ: Base = {stats['sector_lambda']:.4f}, adjust by sector",
+                'stage_A': f"Use sector-specific λ: Base = {base_beta:.2f} × λ_Merton",
                 'stage_B': "Use Specification B.3 with sector interactions",
                 'stage_C': "Test for sector-specific time-variation",
                 'stage_D': "Robustness by sector subsamples",
-                'stage_E': "Use sector-specific specifications (2a, 2b, 3a, 4a)"
+                'stage_E': "Use sector-adjusted specifications"
             }
 
         else:  # Path 5: Theory Fails
             return {
-                'stage_A': "CAUTION: Standard specifications may not apply",
-                'stage_B': "Consider alternative factor models (ratings-based, PCA)",
-                'stage_C': "Skip (theory-driven tests not applicable)",
-                'stage_D': "Focus on model-free robustness",
-                'stage_E': "Do not use Merton-based specifications"
+                'stage_A': "CAUTION: Merton theory does not match data patterns",
+                'stage_B': "Consider alternative factor models (empirical PCA, ratings-based)",
+                'stage_C': "Focus on empirical patterns rather than theory-driven tests",
+                'stage_D': "Extensive robustness checks required",
+                'stage_E': "Use empirical specifications rather than Merton-based"
             }
 
     def compare_ig_hy_paths(

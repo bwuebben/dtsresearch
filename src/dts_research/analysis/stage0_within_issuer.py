@@ -3,11 +3,15 @@ Stage 0: Within-Issuer Analysis
 
 Implements the second component of evolved Stage 0:
 - Uses same issuer, different maturities to isolate maturity effects
-- Issuer-week fixed effects control for common credit shocks
+- Issuer-week fixed effects absorb common credit shocks
+- Tests if cross-maturity spread CHANGES match Merton predictions
 - Inverse-variance weighted pooling for meta-analysis
-- Tests for consistency with Merton model predictions
 
-Based on Specification 0.2 from the paper.
+Based on Specification 0.2 / Equation 4.4 from the paper:
+    Δs_{ij,t} / s_{ij,t-1} = α_{i,t} + β · λ_{ij,t}^Merton + ε_{ij,t}
+
+where the issuer-week fixed effect α_{i,t} absorbs the common firm value shock,
+and identification comes from cross-maturity variation within issuer-weeks.
 """
 
 import pandas as pd
@@ -18,6 +22,7 @@ from scipy import stats
 
 from ..data.issuer_identification import add_issuer_identification
 from ..data.filters import apply_within_issuer_filters
+from ..models.merton import MertonLambdaCalculator, calculate_merton_lambda
 from ..utils.statistical_tests import (
     clustered_standard_errors,
     inverse_variance_weighted_pooling
@@ -34,10 +39,11 @@ class WithinIssuerAnalysis:
     Within-issuer analysis for Stage 0.
 
     For each issuer-week with ≥3 bonds spanning ≥2 years:
-    1. Run regression: ln(s_i) = α_issuer-week + λ·T_i + ε_i
-    2. Extract issuer-week specific λ estimates
-    3. Pool estimates using inverse-variance weighting
-    4. Test for positive λ (Merton prediction)
+    1. Compute percentage spread CHANGES for each bond
+    2. Compute Merton-predicted elasticity λ^Merton for each bond
+    3. Run regression: Δs/s = α_{i,t} + β · λ^Merton + ε
+    4. Pool β estimates using inverse-variance weighting
+    5. Test H0: β = 1 (Merton predicts correctly)
     """
 
     def __init__(self):
@@ -45,6 +51,7 @@ class WithinIssuerAnalysis:
         self.min_bonds = MIN_BONDS_PER_ISSUER_WEEK
         self.min_dispersion = MIN_MATURITY_DISPERSION_YEARS
         self.pull_to_par = PULL_TO_PAR_EXCLUSION_YEARS
+        self.merton_calc = MertonLambdaCalculator()
 
     def run_within_issuer_analysis(
         self,
@@ -62,9 +69,9 @@ class WithinIssuerAnalysis:
 
         Returns:
             Dictionary with results:
-            - issuer_week_estimates: DataFrame with λ per issuer-week
-            - pooled_estimate: Inverse-variance weighted pooled λ
-            - hypothesis_test: Test for λ > 0 (Merton prediction)
+            - issuer_week_estimates: DataFrame with β per issuer-week
+            - pooled_estimate: Inverse-variance weighted pooled β
+            - hypothesis_test: Test for β = 1 (Merton prediction)
             - diagnostics: Quality checks
         """
         # Step 1: Add issuer identification (ultimate_parent_id + seniority)
@@ -85,30 +92,39 @@ class WithinIssuerAnalysis:
         if len(bond_data) == 0:
             return self._empty_results(universe, "No bonds in universe")
 
-        # Step 3: Apply within-issuer filters
+        # Step 3: Compute spread changes
+        bond_data = self._compute_spread_changes(bond_data)
+
+        if len(bond_data) == 0:
+            return self._empty_results(universe, "No data after computing spread changes")
+
+        # Step 4: Compute Merton-predicted elasticity for each bond
+        bond_data = self._compute_merton_lambda(bond_data)
+
+        # Step 5: Apply within-issuer filters
         bond_data, filter_stats = apply_within_issuer_filters(
             bond_data,
             maturity_column='time_to_maturity',
-            spread_change_column=None,  # Not using spread changes here
+            spread_change_column='spread_change',
             verbose=verbose
         )
 
         if len(bond_data) == 0:
             return self._empty_results(universe, "No data after filtering")
 
-        # Step 4: Run issuer-week regressions
+        # Step 6: Run issuer-week regressions
         issuer_week_estimates = self._run_issuer_week_regressions(bond_data)
 
         if len(issuer_week_estimates) == 0:
             return self._empty_results(universe, "No issuer-week estimates obtained")
 
-        # Step 5: Pool estimates using inverse-variance weighting
+        # Step 7: Pool estimates using inverse-variance weighting
         pooled = self._pool_estimates(issuer_week_estimates)
 
-        # Step 6: Hypothesis test for λ > 0
+        # Step 8: Hypothesis test for β = 1 (not just β > 0)
         hypothesis_test = self._test_merton_prediction(pooled)
 
-        # Step 7: Diagnostics
+        # Step 9: Diagnostics
         diagnostics = self._compute_diagnostics(
             bond_data, issuer_week_estimates, filter_stats
         )
@@ -122,6 +138,53 @@ class WithinIssuerAnalysis:
             'filter_stats': filter_stats
         }
 
+    def _compute_spread_changes(self, bond_data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute percentage spread changes for each bond.
+
+        Args:
+            bond_data: DataFrame with 'oas', 'cusip' (or bond id), 'date'
+
+        Returns:
+            DataFrame with 'spread_change' and 'oas_lag' columns
+        """
+        # Sort by bond and date
+        bond_id_col = 'cusip' if 'cusip' in bond_data.columns else 'bond_id'
+        bond_data = bond_data.sort_values([bond_id_col, 'date'])
+
+        # Compute lagged spread within each bond
+        bond_data['oas_lag'] = bond_data.groupby(bond_id_col)['oas'].shift(1)
+
+        # Compute percentage spread change
+        bond_data['spread_change'] = (bond_data['oas'] - bond_data['oas_lag']) / bond_data['oas_lag']
+
+        # Remove NaN (first observation for each bond)
+        bond_data = bond_data.dropna(subset=['spread_change', 'oas_lag'])
+
+        # Remove extreme outliers (likely data errors)
+        bond_data = bond_data[bond_data['spread_change'].abs() <= 1.0]  # ±100%
+
+        return bond_data
+
+    def _compute_merton_lambda(self, bond_data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute Merton-predicted elasticity for each bond based on its
+        lagged spread level and time to maturity.
+
+        Args:
+            bond_data: DataFrame with 'oas_lag' and 'time_to_maturity'
+
+        Returns:
+            DataFrame with 'lambda_merton' column
+        """
+        # Use lagged spread (spread at t-1) for computing lambda
+        bond_data['lambda_merton'] = calculate_merton_lambda(
+            bond_data['time_to_maturity'].values,
+            bond_data['oas_lag'].values  # Spread in bps
+        )
+
+        return bond_data
+
     def _run_issuer_week_regressions(
         self,
         bond_data: pd.DataFrame
@@ -129,14 +192,18 @@ class WithinIssuerAnalysis:
         """
         Run within-issuer-week regressions.
 
-        For each issuer-week: ln(s_i) = α + λ·T_i + ε_i
+        For each issuer-week:
+            Δs_{ij,t} / s_{ij,t-1} = α_{i,t} + β · λ_{ij,t}^Merton + ε_{ij,t}
+
+        The constant (α) absorbs the common firm value shock, and β
+        captures whether cross-maturity spread changes match Merton predictions.
 
         Args:
-            bond_data: Filtered DataFrame
+            bond_data: Filtered DataFrame with spread_change and lambda_merton
 
         Returns:
             DataFrame with columns:
-            - issuer_id, date, lambda, lambda_se, lambda_tstat, lambda_pvalue,
+            - issuer_id, date, beta, beta_se, beta_tstat, beta_pvalue,
               n_bonds, r_squared, maturity_range
         """
         results = []
@@ -150,9 +217,17 @@ class WithinIssuerAnalysis:
             if maturity_range < self.min_dispersion:
                 continue
 
+            # Check that we have variation in lambda_merton
+            lambda_range = group['lambda_merton'].max() - group['lambda_merton'].min()
+            if lambda_range < 0.1:  # Need sufficient variation for identification
+                continue
+
             # Prepare data
-            y = np.log(group['oas'].values)
-            X = group['time_to_maturity'].values
+            # Dependent variable: percentage spread change
+            y = group['spread_change'].values
+
+            # Independent variable: Merton-predicted elasticity
+            X = group['lambda_merton'].values
             X_const = sm.add_constant(X)
 
             # Run OLS
@@ -162,15 +237,17 @@ class WithinIssuerAnalysis:
                 results.append({
                     'issuer_id': issuer_id,
                     'date': date,
-                    'lambda': model.params[1],
-                    'lambda_se': model.bse[1],
-                    'lambda_tstat': model.tvalues[1],
-                    'lambda_pvalue': model.pvalues[1],
-                    'alpha': model.params[0],
+                    'beta': model.params[1],  # Coefficient on lambda_merton
+                    'beta_se': model.bse[1],
+                    'beta_tstat': model.tvalues[1],
+                    'beta_pvalue': model.pvalues[1],
+                    'alpha': model.params[0],  # Absorbs common shock
                     'n_bonds': len(group),
                     'r_squared': model.rsquared,
                     'maturity_range': maturity_range,
-                    'spread_range': (group['oas'].min(), group['oas'].max())
+                    'lambda_range': lambda_range,
+                    'mean_spread': group['oas_lag'].mean(),
+                    'spread_range': (group['oas_lag'].min(), group['oas_lag'].max())
                 })
 
             except Exception:
@@ -190,21 +267,29 @@ class WithinIssuerAnalysis:
         Pool issuer-week estimates using inverse-variance weighting.
 
         Args:
-            issuer_week_estimates: DataFrame with λ estimates
+            issuer_week_estimates: DataFrame with β estimates
 
         Returns:
             Dictionary with pooled estimate and inference
         """
-        estimates = issuer_week_estimates['lambda'].values
-        variances = issuer_week_estimates['lambda_se'].values ** 2
+        estimates = issuer_week_estimates['beta'].values
+        variances = issuer_week_estimates['beta_se'].values ** 2
 
         pooled = inverse_variance_weighted_pooling(estimates, variances)
+
+        # Rename for clarity
+        pooled['pooled_beta'] = pooled.pop('pooled_estimate', np.nan)
+        pooled['pooled_beta_se'] = pooled.pop('pooled_se', np.nan)
 
         return pooled
 
     def _test_merton_prediction(self, pooled: Dict) -> Dict:
         """
-        Test Merton prediction: H0: λ ≤ 0 vs H1: λ > 0
+        Test Merton prediction: H0: β = 1 (Merton is correct)
+
+        If β = 1, Merton's predicted elasticity ratios are exactly right.
+        If β < 1, Merton over-predicts cross-maturity dispersion.
+        If β > 1, Merton under-predicts cross-maturity dispersion.
 
         Args:
             pooled: Pooled estimate dictionary
@@ -212,39 +297,78 @@ class WithinIssuerAnalysis:
         Returns:
             Dictionary with hypothesis test results
         """
-        lambda_pooled = pooled.get('pooled_estimate', np.nan)
-        lambda_se = pooled.get('pooled_se', np.nan)
+        beta_pooled = pooled.get('pooled_beta', np.nan)
+        beta_se = pooled.get('pooled_beta_se', np.nan)
 
-        if np.isnan(lambda_pooled) or np.isnan(lambda_se):
+        if np.isnan(beta_pooled) or np.isnan(beta_se) or beta_se == 0:
             return {
-                'test': 'λ > 0 (Merton prediction)',
+                'test': 'H0: β = 1 (Merton prediction)',
                 't_statistic': np.nan,
-                'p_value': np.nan,
-                'reject_null': False,
+                'p_value_beta_equals_1': np.nan,
+                'p_value_beta_positive': np.nan,
+                'reject_beta_equals_1': False,
+                'beta_in_range': False,
                 'interpretation': 'Insufficient data'
             }
 
-        # One-sided t-test
-        t_stat = lambda_pooled / lambda_se
-        p_value = 1 - stats.norm.cdf(t_stat)  # Right-tail test
+        # Test 1: H0: β = 1 (two-sided)
+        t_stat_eq_1 = (beta_pooled - 1.0) / beta_se
+        p_value_eq_1 = 2 * (1 - stats.norm.cdf(np.abs(t_stat_eq_1)))
+
+        # Test 2: H0: β ≤ 0 vs H1: β > 0 (sanity check)
+        t_stat_pos = beta_pooled / beta_se
+        p_value_pos = 1 - stats.norm.cdf(t_stat_pos)
+
+        # Check if β is in acceptable range [0.9, 1.1]
+        beta_in_range = 0.9 <= beta_pooled <= 1.1
 
         return {
-            'test': 'H0: λ ≤ 0 vs H1: λ > 0',
-            't_statistic': t_stat,
-            'p_value': p_value,
-            'reject_null': p_value < 0.05,
-            'interpretation': self._interpret_merton_test(lambda_pooled, p_value)
+            'test': 'H0: β = 1 (Merton prediction)',
+            'beta_pooled': beta_pooled,
+            'beta_se': beta_se,
+            't_statistic_beta_eq_1': t_stat_eq_1,
+            'p_value_beta_equals_1': p_value_eq_1,
+            't_statistic_beta_pos': t_stat_pos,
+            'p_value_beta_positive': p_value_pos,
+            'reject_beta_equals_1': p_value_eq_1 < 0.05,
+            'beta_in_range_0_9_1_1': beta_in_range,
+            'merton_validates': beta_in_range and p_value_eq_1 > 0.10,
+            'interpretation': self._interpret_merton_test(beta_pooled, beta_se, p_value_eq_1)
         }
 
-    def _interpret_merton_test(self, lambda_pooled: float, p_value: float) -> str:
+    def _interpret_merton_test(
+        self,
+        beta_pooled: float,
+        beta_se: float,
+        p_value: float
+    ) -> str:
         """Interpret Merton hypothesis test."""
-        if np.isnan(lambda_pooled) or np.isnan(p_value):
+        if np.isnan(beta_pooled) or np.isnan(p_value):
             return "Insufficient data for test"
 
-        if p_value < 0.05:
-            return f"λ = {lambda_pooled:.4f} is significantly positive (p={p_value:.4f}) - consistent with Merton"
+        ci_lower = beta_pooled - 1.96 * beta_se
+        ci_upper = beta_pooled + 1.96 * beta_se
+
+        if 0.9 <= beta_pooled <= 1.1 and p_value > 0.10:
+            return (
+                f"β = {beta_pooled:.3f} (95% CI: [{ci_lower:.3f}, {ci_upper:.3f}]) "
+                f"is consistent with Merton (p={p_value:.3f} for H0: β=1)"
+            )
+        elif beta_pooled < 0.9:
+            return (
+                f"β = {beta_pooled:.3f} < 1: Merton OVER-predicts cross-maturity dispersion "
+                f"(p={p_value:.4f} for H0: β=1)"
+            )
+        elif beta_pooled > 1.1:
+            return (
+                f"β = {beta_pooled:.3f} > 1: Merton UNDER-predicts cross-maturity dispersion "
+                f"(p={p_value:.4f} for H0: β=1)"
+            )
         else:
-            return f"λ = {lambda_pooled:.4f} not significantly positive (p={p_value:.4f}) - inconsistent with Merton"
+            return (
+                f"β = {beta_pooled:.3f} is in range [0.9, 1.1] but significantly different from 1 "
+                f"(p={p_value:.4f}) - marginal fit"
+            )
 
     def _compute_diagnostics(
         self,
@@ -263,18 +387,25 @@ class WithinIssuerAnalysis:
         Returns:
             Dictionary with diagnostics
         """
+        n_iw_total = bond_data.groupby(['issuer_id', 'date']).ngroups if len(bond_data) > 0 else 0
+
         return {
             'n_bonds_after_filter': len(bond_data),
-            'n_unique_issuers': bond_data['issuer_id'].nunique(),
-            'n_unique_weeks': bond_data['date'].nunique(),
-            'n_issuer_weeks_total': bond_data.groupby(['issuer_id', 'date']).ngroups,
+            'n_unique_issuers': bond_data['issuer_id'].nunique() if len(bond_data) > 0 else 0,
+            'n_unique_weeks': bond_data['date'].nunique() if len(bond_data) > 0 else 0,
+            'n_issuer_weeks_total': n_iw_total,
             'n_issuer_weeks_with_estimate': len(issuer_week_estimates),
-            'pct_issuer_weeks_with_estimate': 100.0 * len(issuer_week_estimates) / bond_data.groupby(['issuer_id', 'date']).ngroups if bond_data.groupby(['issuer_id', 'date']).ngroups > 0 else 0,
+            'pct_issuer_weeks_with_estimate': 100.0 * len(issuer_week_estimates) / n_iw_total if n_iw_total > 0 else 0,
             'mean_bonds_per_issuer_week': issuer_week_estimates['n_bonds'].mean() if len(issuer_week_estimates) > 0 else np.nan,
             'mean_maturity_range': issuer_week_estimates['maturity_range'].mean() if len(issuer_week_estimates) > 0 else np.nan,
-            'pct_significant_positive': 100.0 * ((issuer_week_estimates['lambda'] > 0) & (issuer_week_estimates['lambda_pvalue'] < 0.05)).mean() if len(issuer_week_estimates) > 0 else 0,
-            'pct_significant_negative': 100.0 * ((issuer_week_estimates['lambda'] < 0) & (issuer_week_estimates['lambda_pvalue'] < 0.05)).mean() if len(issuer_week_estimates) > 0 else 0,
-            'lambda_range': (issuer_week_estimates['lambda'].min(), issuer_week_estimates['lambda'].max()) if len(issuer_week_estimates) > 0 else (np.nan, np.nan)
+            'mean_r_squared': issuer_week_estimates['r_squared'].mean() if len(issuer_week_estimates) > 0 else np.nan,
+            # β distribution
+            'median_beta': issuer_week_estimates['beta'].median() if len(issuer_week_estimates) > 0 else np.nan,
+            'mean_beta': issuer_week_estimates['beta'].mean() if len(issuer_week_estimates) > 0 else np.nan,
+            'std_beta': issuer_week_estimates['beta'].std() if len(issuer_week_estimates) > 0 else np.nan,
+            'pct_beta_in_0_8_1_2': 100.0 * ((issuer_week_estimates['beta'] >= 0.8) & (issuer_week_estimates['beta'] <= 1.2)).mean() if len(issuer_week_estimates) > 0 else 0,
+            'pct_beta_positive': 100.0 * (issuer_week_estimates['beta'] > 0).mean() if len(issuer_week_estimates) > 0 else 0,
+            'beta_range': (issuer_week_estimates['beta'].min(), issuer_week_estimates['beta'].max()) if len(issuer_week_estimates) > 0 else (np.nan, np.nan)
         }
 
     def _empty_results(self, universe: str, reason: str) -> Dict:
@@ -283,13 +414,13 @@ class WithinIssuerAnalysis:
             'universe': universe,
             'issuer_week_estimates': pd.DataFrame(),
             'pooled_estimate': {
-                'pooled_estimate': np.nan,
-                'pooled_se': np.nan,
+                'pooled_beta': np.nan,
+                'pooled_beta_se': np.nan,
                 'n_estimates': 0,
                 'warning': reason
             },
             'hypothesis_test': {
-                'reject_null': False,
+                'merton_validates': False,
                 'interpretation': reason
             },
             'diagnostics': {
@@ -313,15 +444,18 @@ class WithinIssuerAnalysis:
         Returns:
             Dictionary with comparison statistics
         """
-        ig_lambda = ig_results['pooled_estimate'].get('pooled_estimate', np.nan)
-        hy_lambda = hy_results['pooled_estimate'].get('pooled_estimate', np.nan)
+        ig_beta = ig_results['pooled_estimate'].get('pooled_beta', np.nan)
+        hy_beta = hy_results['pooled_estimate'].get('pooled_beta', np.nan)
 
-        ig_se = ig_results['pooled_estimate'].get('pooled_se', np.nan)
-        hy_se = hy_results['pooled_estimate'].get('pooled_se', np.nan)
+        ig_se = ig_results['pooled_estimate'].get('pooled_beta_se', np.nan)
+        hy_se = hy_results['pooled_estimate'].get('pooled_beta_se', np.nan)
 
-        # Test for difference
-        if not np.isnan(ig_lambda) and not np.isnan(hy_lambda) and not np.isnan(ig_se) and not np.isnan(hy_se):
-            diff = hy_lambda - ig_lambda
+        ig_validates = ig_results['hypothesis_test'].get('merton_validates', False)
+        hy_validates = hy_results['hypothesis_test'].get('merton_validates', False)
+
+        # Test for difference in β
+        if not np.isnan(ig_beta) and not np.isnan(hy_beta) and not np.isnan(ig_se) and not np.isnan(hy_se):
+            diff = hy_beta - ig_beta
             se_diff = np.sqrt(ig_se**2 + hy_se**2)
             t_stat = diff / se_diff
             p_value = 2 * (1 - stats.norm.cdf(np.abs(t_stat)))
@@ -332,33 +466,38 @@ class WithinIssuerAnalysis:
             p_value = np.nan
 
         return {
-            'ig_lambda': ig_lambda,
-            'hy_lambda': hy_lambda,
+            'ig_beta': ig_beta,
+            'hy_beta': hy_beta,
+            'ig_validates_merton': ig_validates,
+            'hy_validates_merton': hy_validates,
+            'both_validate': ig_validates and hy_validates,
             'difference': diff,
             'difference_se': se_diff,
             't_statistic': t_stat,
             'p_value': p_value,
             'significant_difference': p_value < 0.05 if not np.isnan(p_value) else False,
-            'interpretation': self._interpret_ig_hy_comparison(ig_lambda, hy_lambda, p_value)
+            'interpretation': self._interpret_ig_hy_comparison(ig_beta, hy_beta, ig_validates, hy_validates)
         }
 
     def _interpret_ig_hy_comparison(
         self,
-        ig_lambda: float,
-        hy_lambda: float,
-        p_value: float
+        ig_beta: float,
+        hy_beta: float,
+        ig_validates: bool,
+        hy_validates: bool
     ) -> str:
         """Interpret IG vs HY comparison."""
-        if np.isnan(ig_lambda) or np.isnan(hy_lambda) or np.isnan(p_value):
+        if np.isnan(ig_beta) or np.isnan(hy_beta):
             return "Insufficient data for comparison"
 
-        if p_value >= 0.05:
-            return "No significant difference between IG and HY λ"
-
-        if hy_lambda > ig_lambda:
-            return f"HY has significantly higher λ (p={p_value:.4f})"
+        if ig_validates and hy_validates:
+            return f"Merton validated in both IG (β={ig_beta:.2f}) and HY (β={hy_beta:.2f})"
+        elif ig_validates:
+            return f"Merton validated in IG (β={ig_beta:.2f}) but NOT in HY (β={hy_beta:.2f})"
+        elif hy_validates:
+            return f"Merton validated in HY (β={hy_beta:.2f}) but NOT in IG (β={ig_beta:.2f})"
         else:
-            return f"IG has significantly higher λ (p={p_value:.4f})"
+            return f"Merton NOT validated in either universe (IG β={ig_beta:.2f}, HY β={hy_beta:.2f})"
 
 
 def run_within_issuer_analysis_both_universes(
