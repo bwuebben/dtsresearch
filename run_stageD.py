@@ -31,6 +31,7 @@ from dts_research.data.loader import BondDataLoader
 from dts_research.data.bucket_definitions import classify_bonds_into_buckets
 from dts_research.data.sector_classification import SectorClassifier
 from dts_research.data.issuer_identification import add_issuer_identification
+from dts_research.data.preprocessing import prepare_spread_change_data
 from dts_research.analysis.stageD import StageDAnalysis
 from dts_research.analysis.stage0_synthesis import Stage0Synthesis
 from dts_research.analysis.stage0_bucket import BucketLevelAnalysis
@@ -46,25 +47,17 @@ def prepare_regression_data(bond_data: pd.DataFrame) -> pd.DataFrame:
     Prepare bond data for regression analysis.
 
     Adds spread changes, index DTS factor, Merton lambda, and required columns.
+    Uses centralized preprocessing from dts_research.data.preprocessing.
     """
-    df = bond_data.copy()
-
-    # Compute spread changes
-    df = df.sort_values(['bond_id', 'date'])
-    df['oas_lag'] = df.groupby('bond_id')['oas'].shift(1)
-    df['oas_pct_change'] = (df['oas'] - df['oas_lag']) / df['oas_lag']
-
-    # Compute index-level DTS factor
-    index_factor = df.groupby('date')['oas'].mean()
-    index_factor_pct = index_factor.pct_change()
-    df = df.merge(
-        index_factor_pct.reset_index().rename(columns={'oas': 'oas_index_pct_change'}),
-        on='date',
-        how='left'
+    # Use centralized spread change calculation
+    df = prepare_spread_change_data(
+        bond_data,
+        bond_id_col='bond_id',
+        add_week_identifier=True,
+        add_spread_regime=True
     )
-    df['f_DTS'] = df['oas_index_pct_change']
 
-    # Compute Merton lambda
+    # Compute Merton lambda (Stage D specific)
     merton_calc = MertonLambdaCalculator()
     df['lambda_Merton'] = df.apply(
         lambda row: merton_calc.lambda_combined(row['time_to_maturity'], row['oas']),
@@ -74,14 +67,8 @@ def prepare_regression_data(bond_data: pd.DataFrame) -> pd.DataFrame:
     # Compute Merton-scaled factor
     df['f_merton'] = df['lambda_Merton'] * df['f_DTS']
 
-    # Add spread regime
-    df['spread_regime'] = np.where(df['oas'] < 300, 'IG', 'HY')
-
-    # Add week identifier for clustering
-    df['week'] = df['date'].dt.isocalendar().week.astype(str) + '_' + df['date'].dt.year.astype(str)
-
-    # Drop NaN
-    df = df.dropna(subset=['oas_pct_change', 'oas_index_pct_change', 'lambda_Merton'])
+    # Drop NaN in Merton columns
+    df = df.dropna(subset=['lambda_Merton'])
 
     return df
 

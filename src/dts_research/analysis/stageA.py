@@ -23,6 +23,8 @@ from scipy import stats
 from itertools import combinations
 import warnings
 
+from ..data.preprocessing import compute_spread_changes
+
 # Suppress specific warnings from rolling window regressions with small samples
 warnings.filterwarnings('ignore', message='invalid value encountered in scalar divide')
 warnings.filterwarnings('ignore', category=RuntimeWarning, module='statsmodels')
@@ -456,8 +458,14 @@ class StageAAnalysis:
         # Sort
         df = df.sort_values(['bond_id', 'date'])
 
-        # Compute percentage changes
-        df['oas_pct_change'] = df.groupby('bond_id')['oas'].pct_change()
+        # Compute bond-level percentage changes using centralized function
+        df = compute_spread_changes(
+            df,
+            bond_id_col='bond_id',
+            max_change_pct=None  # No outlier filtering for rolling window estimation
+        )
+
+        # Compute index percentage changes (from merged index data)
         df['oas_index_pct_change'] = df.groupby('bond_id')['oas_index'].transform(
             lambda x: x.pct_change()
         )

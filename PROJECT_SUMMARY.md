@@ -215,14 +215,22 @@ lambda_combined(maturity, spread)    # Total adjustment
 classify_regime(spread, mat_range)   # Regime identification
 ```
 
-### 2. Data Infrastructure (`data/loader.py` - 238 lines)
+### 2. Data Infrastructure (`data/` - ~400 lines)
 
-✅ **BondDataLoader**
+✅ **BondDataLoader** (`loader.py`)
 - Database connection framework
 - SQL query template (customizable)
 - Mock data generator (500 bonds, 2010-2024, weekly)
 - Index-level data (IG and HY)
 - Realistic spread dynamics
+
+✅ **Centralized Preprocessing** (`preprocessing.py`)
+- Single source of truth for OAS spread change calculations
+- `compute_spread_changes()`: Bond-level percentage changes
+- `compute_index_dts_factor()`: Index-level DTS factor
+- `prepare_spread_change_data()`: Combined preprocessing for all stages
+- Formula: `oas_pct_change = (oas_t - oas_{t-1}) / oas_{t-1}`
+- Eliminates code duplication across all 10+ locations
 
 **Mock Data Features**:
 - 6 rating categories (AAA to CCC)
@@ -373,7 +381,8 @@ Built into analysis:
 dtsresearch/
 ├── src/dts_research/
 │   ├── data/
-│   │   └── loader.py              # Database + mock data
+│   │   ├── loader.py              # Database + mock data
+│   │   └── preprocessing.py       # Centralized spread change calculations
 │   ├── models/
 │   │   └── merton.py              # Lambda calculator
 │   ├── analysis/

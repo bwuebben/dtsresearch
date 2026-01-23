@@ -41,6 +41,7 @@ from dts_research.data.loader import BondDataLoader
 from dts_research.data.sector_classification import SectorClassifier
 from dts_research.data.issuer_identification import add_issuer_identification
 from dts_research.data.bucket_definitions import classify_bonds_into_buckets
+from dts_research.data.preprocessing import prepare_spread_change_data
 
 # Analysis modules
 from dts_research.analysis.stage0_bucket import BucketLevelAnalysis
@@ -116,45 +117,33 @@ def preprocess_bond_data(bond_data: pd.DataFrame, verbose: bool = True) -> pd.Da
         n_issuers = df['issuer_id'].nunique()
         print(f"  - Added issuer identification: {n_issuers} unique issuers")
 
-    # Add spread regime
-    df['spread_regime'] = np.where(df['oas'] < 300, 'IG', 'HY')
-
-    # Add week identifier for clustering
-    df['week'] = df['date'].dt.isocalendar().week.astype(str) + '_' + df['date'].dt.year.astype(str)
-
-    # Add maturity bucket
+    # Add maturity bucket (before spread change computation)
     df['maturity_bucket'] = pd.cut(
         df['time_to_maturity'],
         bins=[0, 2, 3, 5, 7, 10, 100],
         labels=['1-2y', '2-3y', '3-5y', '5-7y', '7-10y', '10y+']
     )
 
-    # Compute spread changes
-    df = df.sort_values(['bond_id', 'date'])
-    df['oas_lag'] = df.groupby('bond_id')['oas'].shift(1)
-    df['oas_pct_change'] = (df['oas'] - df['oas_lag']) / df['oas_lag']
-
-    # Compute index-level DTS factor (universe percentage spread change)
+    # Compute index-level OAS (level, not pct change) for Stage C/E - before filtering
     index_factor = df.groupby('date')['oas'].mean()
-    index_factor_pct = index_factor.pct_change()
-    df = df.merge(
-        index_factor_pct.reset_index().rename(columns={'oas': 'oas_index_pct_change'}),
-        on='date',
-        how='left'
-    )
 
-    # Add OAS index level for Stage C/E
+    # Compute spread changes using centralized preprocessing
+    initial_len = len(df)
+    df = prepare_spread_change_data(
+        df,
+        bond_id_col='bond_id',
+        add_week_identifier=True,
+        add_spread_regime=True
+    )
+    if verbose:
+        print(f"  - Computed spread changes: {len(df)} observations (dropped {initial_len - len(df)} NaN)")
+
+    # Add OAS index level for Stage C/E (merge after spread change computation)
     df = df.merge(
         index_factor.reset_index().rename(columns={'oas': 'oas_index'}),
         on='date',
         how='left'
     )
-
-    # Drop rows with NaN in key columns
-    initial_len = len(df)
-    df = df.dropna(subset=['oas_pct_change', 'oas_index_pct_change'])
-    if verbose:
-        print(f"  - Computed spread changes: {len(df)} observations (dropped {initial_len - len(df)} NaN)")
 
     # Add Merton lambda components for Stage E
     merton_calc = MertonLambdaCalculator()

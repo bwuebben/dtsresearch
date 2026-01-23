@@ -158,6 +158,7 @@ dtsresearch/
 │   └── dts_research/
 │       ├── data/
 │       │   ├── loader.py              # Data loading and mock data generation
+│       │   ├── preprocessing.py       # Centralized OAS spread change calculations
 │       │   ├── sector_classification.py  # Bloomberg BCLASS3 sector mapping
 │       │   └── issuer_identification.py  # Composite issuer ID (parent + seniority)
 │       ├── models/

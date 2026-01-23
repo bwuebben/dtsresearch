@@ -23,16 +23,33 @@ This project implements a complete multi-stage empirical research program (Stage
 - `BondDataLoader`: Handles database connectivity and data retrieval
 - `SectorClassifier`: Maps Bloomberg BCLASS3 to research sectors (Financial, Utility, Energy, Industrial)
 - `issuer_identification`: Creates composite issuer ID (Ultimate Parent + Seniority)
+- `preprocessing`: Centralized OAS spread change calculations (single source of truth)
+
+**Preprocessing Module** (`preprocessing.py`):
+The preprocessing module provides centralized functions for computing OAS spread changes:
+```python
+compute_spread_changes(df)           # Bond-level percentage changes
+compute_index_dts_factor(df)         # Index-level DTS factor
+prepare_spread_change_data(df)       # Combined preprocessing for all stages
+```
+
+All spread change calculations use the same formula:
+```
+oas_pct_change = (oas_t - oas_{t-1}) / oas_{t-1}
+```
+
+This ensures consistency across all stages (0, A, B, C, D, E) and eliminates code duplication.
 
 **Design patterns**:
 - **Abstraction**: Single interface for both real and mock data
 - **Lazy loading**: Connection established only when needed
 - **User customization**: Clear TODOs for database-specific code
 - **Sector standardization**: Consistent sector classification across all stages
+- **Centralized preprocessing**: Single source of truth for spread change calculations
 
 **Data flow**:
 ```
-Database/Mock → BondDataLoader → SectorClassifier → Issuer ID → Pandas DataFrame → Analysis modules
+Database/Mock → BondDataLoader → SectorClassifier → Issuer ID → Preprocessing → Analysis modules
 ```
 
 **Schema**:

@@ -21,6 +21,7 @@ import statsmodels.api as sm
 from scipy import stats
 
 from ..data.bucket_definitions import BucketDefinitions, classify_bonds_into_buckets
+from ..data.preprocessing import compute_spread_changes, compute_index_dts_factor
 from ..models.merton import MertonLambdaCalculator, calculate_merton_lambda
 from ..utils.statistical_tests import (
     clustered_standard_errors,
@@ -127,27 +128,25 @@ class BucketLevelAnalysis:
         """
         Compute percentage spread changes for each bond.
 
+        Uses centralized preprocessing from dts_research.data.preprocessing.
+
         Args:
             bond_data: DataFrame with 'oas', 'cusip' (or bond id), 'date'
 
         Returns:
             DataFrame with 'spread_change' column (Δs/s_{t-1})
         """
-        # Sort by bond and date
         bond_id_col = 'cusip' if 'cusip' in bond_data.columns else 'bond_id'
-        bond_data = bond_data.sort_values([bond_id_col, 'date'])
 
-        # Compute lagged spread within each bond
-        bond_data['oas_lag'] = bond_data.groupby(bond_id_col)['oas'].shift(1)
+        # Use centralized spread change calculation
+        bond_data = compute_spread_changes(
+            bond_data,
+            bond_id_col=bond_id_col,
+            max_change_pct=1.0  # ±100% outlier filter
+        )
 
-        # Compute percentage spread change
-        bond_data['spread_change'] = (bond_data['oas'] - bond_data['oas_lag']) / bond_data['oas_lag']
-
-        # Remove NaN (first observation for each bond)
-        bond_data = bond_data.dropna(subset=['spread_change'])
-
-        # Remove extreme outliers (likely data errors)
-        bond_data = bond_data[bond_data['spread_change'].abs() <= 1.0]  # ±100%
+        # Add legacy column name for backward compatibility
+        bond_data['spread_change'] = bond_data['oas_pct_change']
 
         return bond_data
 
@@ -158,22 +157,28 @@ class BucketLevelAnalysis:
         """
         Compute index-level DTS factor: weighted average percentage spread change.
 
+        Uses centralized preprocessing from dts_research.data.preprocessing.
+
         Args:
             bond_data: DataFrame with spread changes
 
         Returns:
             Tuple of (bond_data with f_dts column, index_factor DataFrame)
         """
-        # Compute index-level spread change per week (DTS-weighted)
-        # f_DTS,t = Σ(w_i * Δs_i,t / s_i,t-1) where w_i = DTS_i / Σ DTS
-        # For simplicity, use equal-weighted average as starting point
+        # Use centralized index factor calculation
+        bond_data, index_factor_full = compute_index_dts_factor(
+            bond_data,
+            output_col='oas_index_pct_change'
+        )
+
+        # Add legacy column name for backward compatibility
+        bond_data['f_dts'] = bond_data['oas_index_pct_change']
+
+        # Create index_factor DataFrame with legacy format
         index_factor = bond_data.groupby('date').agg(
             f_dts=('spread_change', 'mean'),
             n_bonds=('spread_change', 'count')
         ).reset_index()
-
-        # Merge back to bond data
-        bond_data = bond_data.merge(index_factor[['date', 'f_dts']], on='date', how='left')
 
         return bond_data, index_factor
 

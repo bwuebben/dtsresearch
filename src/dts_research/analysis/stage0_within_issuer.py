@@ -22,6 +22,7 @@ from scipy import stats
 
 from ..data.issuer_identification import add_issuer_identification
 from ..data.filters import apply_within_issuer_filters
+from ..data.preprocessing import compute_spread_changes
 from ..models.merton import MertonLambdaCalculator, calculate_merton_lambda
 from ..utils.statistical_tests import (
     clustered_standard_errors,
@@ -142,27 +143,25 @@ class WithinIssuerAnalysis:
         """
         Compute percentage spread changes for each bond.
 
+        Uses centralized preprocessing from dts_research.data.preprocessing.
+
         Args:
             bond_data: DataFrame with 'oas', 'cusip' (or bond id), 'date'
 
         Returns:
             DataFrame with 'spread_change' and 'oas_lag' columns
         """
-        # Sort by bond and date
         bond_id_col = 'cusip' if 'cusip' in bond_data.columns else 'bond_id'
-        bond_data = bond_data.sort_values([bond_id_col, 'date'])
 
-        # Compute lagged spread within each bond
-        bond_data['oas_lag'] = bond_data.groupby(bond_id_col)['oas'].shift(1)
+        # Use centralized spread change calculation
+        bond_data = compute_spread_changes(
+            bond_data,
+            bond_id_col=bond_id_col,
+            max_change_pct=1.0  # ±100% outlier filter
+        )
 
-        # Compute percentage spread change
-        bond_data['spread_change'] = (bond_data['oas'] - bond_data['oas_lag']) / bond_data['oas_lag']
-
-        # Remove NaN (first observation for each bond)
-        bond_data = bond_data.dropna(subset=['spread_change', 'oas_lag'])
-
-        # Remove extreme outliers (likely data errors)
-        bond_data = bond_data[bond_data['spread_change'].abs() <= 1.0]  # ±100%
+        # Add legacy column name for backward compatibility
+        bond_data['spread_change'] = bond_data['oas_pct_change']
 
         return bond_data
 
