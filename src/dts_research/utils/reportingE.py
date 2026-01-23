@@ -181,12 +181,18 @@ class StageEReporter:
                 'Complexity': 'High'
             })
 
-        df = pd.DataFrame(rows)
+        if rows:
+            df = pd.DataFrame(rows)
 
-        # Mark recommended
-        recommended_spec = hierarchical_results.get('recommended_spec', '')
-        df['Recommended'] = ''
-        df.loc[df['Specification'] == recommended_spec, 'Recommended'] = '✓'
+            # Mark recommended
+            recommended_spec = hierarchical_results.get('recommended_spec', '')
+            df['Recommended'] = ''
+            if 'Specification' in df.columns:
+                df.loc[df['Specification'] == recommended_spec, 'Recommended'] = '✓'
+        else:
+            # Create empty DataFrame with expected columns if no OOS results
+            df = pd.DataFrame(columns=['Specification', 'Parameters', 'In_sample_R2',
+                                       'OOS_R2', 'OOS_RMSE', 'Complexity', 'Recommended'])
 
         # Save
         output_path = os.path.join(self.output_dir, filename)

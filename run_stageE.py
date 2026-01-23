@@ -13,29 +13,110 @@ This orchestrates the complete Stage E pipeline:
 6. Create visualizations
 7. Generate reports
 8. Provide final recommendations
+
+Usage:
+    python run_stageE.py [--mock-data]
 """
 
+import argparse
 import os
 import sys
 from pathlib import Path
 import pandas as pd
 import numpy as np
-import pickle
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from dts_research.data.loader import BondDataLoader
-from dts_research.analysis.buckets import BucketClassifier
-from dts_research.analysis.stage0 import Stage0Analysis
-from dts_research.analysis.stageE import StageEAnalysis
-from dts_research.visualization.stageE_plots import StageEVisualizer
-from dts_research.utils.reportingE import StageEReporter
+from dts_research.data.bucket_definitions import classify_bonds_into_buckets
 from dts_research.data.sector_classification import SectorClassifier
 from dts_research.data.issuer_identification import add_issuer_identification
+from dts_research.analysis.stageE import StageEAnalysis
+from dts_research.analysis.stage0_synthesis import Stage0Synthesis
+from dts_research.analysis.stage0_bucket import BucketLevelAnalysis
+from dts_research.analysis.stage0_within_issuer import WithinIssuerAnalysis
+from dts_research.analysis.stage0_sector import SectorInteractionAnalysis
+from dts_research.models.merton import MertonLambdaCalculator
+from dts_research.visualization.stageE_plots import StageEVisualizer
+from dts_research.utils.reportingE import StageEReporter
 
 
-def load_prerequisite_results():
+def prepare_regression_data(bond_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Prepare bond data for regression analysis.
+
+    Adds spread changes, index DTS factor, Merton lambda, and required columns.
+    """
+    df = bond_data.copy()
+
+    # Compute spread changes
+    df = df.sort_values(['bond_id', 'date'])
+    df['oas_lag'] = df.groupby('bond_id')['oas'].shift(1)
+    df['oas_pct_change'] = (df['oas'] - df['oas_lag']) / df['oas_lag']
+
+    # Compute index-level DTS factor
+    index_factor = df.groupby('date')['oas'].mean()
+    index_factor_pct = index_factor.pct_change()
+    df = df.merge(
+        index_factor_pct.reset_index().rename(columns={'oas': 'oas_index_pct_change'}),
+        on='date',
+        how='left'
+    )
+    df['f_DTS'] = df['oas_index_pct_change']
+
+    # Compute Merton lambda components
+    merton_calc = MertonLambdaCalculator()
+    df['lambda_Merton'] = df.apply(
+        lambda row: merton_calc.lambda_combined(row['time_to_maturity'], row['oas']),
+        axis=1
+    )
+
+    # Compute Merton-scaled factor
+    df['f_merton'] = df['lambda_Merton'] * df['f_DTS']
+
+    # Add spread regime
+    df['spread_regime'] = np.where(df['oas'] < 300, 'IG', 'HY')
+
+    # Add week identifier for clustering
+    df['week'] = df['date'].dt.isocalendar().week.astype(str) + '_' + df['date'].dt.year.astype(str)
+
+    # Add mock VIX and OAS index for time-varying tests
+    np.random.seed(42)
+    base_vix = 20 + 5 * np.random.randn(len(df))
+    crisis_mask = (df['date'] >= '2020-03-01') & (df['date'] <= '2020-06-01')
+    base_vix[crisis_mask] = base_vix[crisis_mask] + 30
+    df['vix'] = np.clip(base_vix, 10, 80)
+
+    df['oas_index'] = 200 + 50 * np.random.randn(len(df))
+    df['oas_index'] = np.clip(df['oas_index'], 50, 500)
+
+    # Drop NaN
+    df = df.dropna(subset=['oas_pct_change', 'oas_index_pct_change', 'lambda_Merton'])
+
+    return df
+
+
+def get_stage0_synthesis(bond_data: pd.DataFrame, universe: str = 'IG') -> dict:
+    """Run Stage 0 synthesis to get decision path."""
+    bucket_analyzer = BucketLevelAnalysis()
+    bucket_results = bucket_analyzer.run_bucket_analysis(bond_data, universe=universe)
+
+    within_analyzer = WithinIssuerAnalysis()
+    within_results = within_analyzer.run_within_issuer_analysis(bond_data, universe=universe, verbose=False)
+
+    sector_analyzer = SectorInteractionAnalysis()
+    sector_results = sector_analyzer.run_sector_analysis(bond_data, universe=universe, cluster_by='week')
+
+    synthesizer = Stage0Synthesis()
+    synthesis = synthesizer.synthesize_results(
+        bucket_results, within_results, sector_results, universe=universe
+    )
+
+    return synthesis
+
+
+def load_prerequisite_results() -> tuple:
     """
     Load results from Stages A, B, C, D.
 
@@ -81,7 +162,7 @@ def load_prerequisite_results():
         }
     }
 
-    # Mock Stage D results (optional)
+    # Mock Stage D results
     stage_d_results = {
         'tail_tests': {
             'amplification_left': 1.15
@@ -98,6 +179,18 @@ def main():
     """
     Run complete Stage E analysis pipeline.
     """
+    parser = argparse.ArgumentParser(description='Run Stage E Analysis')
+    parser.add_argument('--mock-data', action='store_true', default=True,
+                       help='Use mock data (default: True)')
+    parser.add_argument('--start-date', type=str, default='2020-01-01',
+                       help='Start date (YYYY-MM-DD)')
+    parser.add_argument('--end-date', type=str, default='2023-12-31',
+                       help='End date (YYYY-MM-DD)')
+    parser.add_argument('--output-dir', type=str, default='output',
+                       help='Output directory')
+
+    args = parser.parse_args()
+
     print("=" * 80)
     print("STAGE E: PRODUCTION SPECIFICATION SELECTION")
     print("=" * 80)
@@ -110,14 +203,12 @@ def main():
     print("            strongly reject it. Burden of proof on complex model.")
     print()
 
-    # Configuration
-    start_date = '2010-01-01'
-    end_date = '2024-12-31'
-    use_mock_data = True
-
     # Create output directories
-    os.makedirs('output/figures', exist_ok=True)
-    os.makedirs('output/reports', exist_ok=True)
+    output_dir = Path(args.output_dir)
+    figures_dir = output_dir / 'stageE_figures'
+    reports_dir = output_dir / 'stageE_reports'
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
 
     # -------------------------------------------------------------------------
     # Step 1: Load Data and Prerequisites
@@ -125,34 +216,24 @@ def main():
     print("Step 1: Loading data and prerequisites...")
     print()
 
-    if use_mock_data:
+    loader = BondDataLoader()
+    if args.mock_data:
         print("  Using mock data for testing")
-        loader = BondDataLoader()
-        bond_data = loader.generate_mock_data(start_date, end_date, n_bonds=500)
-        index_data = loader.generate_mock_index_data(start_date, end_date, index_type='IG')
+        bond_data = loader.generate_mock_data(args.start_date, args.end_date, n_bonds=500)
     else:
         print("  Loading from database...")
-        connection_string = "your_connection_string_here"
-        loader = BondDataLoader(connection_string)
-        loader.connect()
-        bond_data = loader.load_bond_data(start_date, end_date)
-        index_data = loader.load_index_data(start_date, end_date, index_type='IG')
-        loader.close()
+        bond_data = loader.load_bond_data(args.start_date, args.end_date)
 
     print(f"  Loaded {len(bond_data):,} bond-week observations")
     print()
 
-    # Classify and prepare
-    print("  Preparing regression data...")
-    classifier = BucketClassifier()
-    bond_data = classifier.classify_bonds(bond_data)
-
-    # Add sector classification and issuer identification (required for Stage 0 evolved specs)
+    # Add sector classification
     print("  Adding sector classification...")
     sector_classifier = SectorClassifier()
     bond_data = sector_classifier.classify_sector(bond_data, bclass_column='sector_classification')
     bond_data = sector_classifier.add_sector_dummies(bond_data)
 
+    # Add issuer identification
     print("  Adding issuer identification...")
     bond_data = add_issuer_identification(
         bond_data,
@@ -160,25 +241,25 @@ def main():
         seniority_col='seniority'
     )
 
-    stage0 = Stage0Analysis()
-    regression_data = stage0.prepare_regression_data(bond_data, index_data)
+    # Classify into buckets
+    bond_data, bucket_stats = classify_bonds_into_buckets(
+        bond_data,
+        rating_column='rating',
+        maturity_column='time_to_maturity',
+        sector_column='sector',
+        compute_characteristics=True
+    )
 
-    # Add mock VIX and OAS index for time-varying tests
-    if 'vix' not in regression_data.columns:
-        np.random.seed(42)
-        # Generate realistic VIX (mean ~20, spikes to 30-80 during crises)
-        base_vix = 20 + 5 * np.random.randn(len(regression_data))
-        # Add crisis spikes
-        crisis_mask = (regression_data['date'] >= '2020-03-01') & (regression_data['date'] <= '2020-06-01')
-        base_vix[crisis_mask] = base_vix[crisis_mask] + 30  # COVID spike
-
-        regression_data['vix'] = np.clip(base_vix, 10, 80)
-
-    if 'oas_index' not in regression_data.columns:
-        regression_data['oas_index'] = 200 + 50 * np.random.randn(len(regression_data))
-        regression_data['oas_index'] = np.clip(regression_data['oas_index'], 50, 500)
-
+    # Prepare regression data
+    print("  Preparing regression data...")
+    regression_data = prepare_regression_data(bond_data)
     print(f"  Prepared {len(regression_data):,} observations for analysis")
+    print()
+
+    # Get Stage 0 synthesis
+    print("  Getting Stage 0 synthesis...")
+    stage0_synthesis = get_stage0_synthesis(bond_data, universe='IG')
+    print(f"  Stage 0 Path: {stage0_synthesis['decision_path']}")
     print()
 
     # Load prerequisite results
@@ -190,7 +271,7 @@ def main():
     print("Step 2: Running hierarchical testing framework...")
     print()
 
-    stageE = StageEAnalysis()
+    stageE = StageEAnalysis(stage0_results=stage0_synthesis)
 
     hierarchical_results = stageE.hierarchical_testing(
         regression_data,
@@ -200,8 +281,8 @@ def main():
         stage_d_results
     )
 
-    recommended_level = hierarchical_results['recommended_level']
-    recommended_spec = hierarchical_results['recommended_spec']
+    recommended_level = hierarchical_results.get('recommended_level', 2)
+    recommended_spec = hierarchical_results.get('recommended_spec', 'Pure Merton')
 
     print()
     print("=" * 80)
@@ -245,8 +326,8 @@ def main():
     oos_summary = oos_results.get('oos_summary', {})
     for spec_name, metrics in oos_summary.items():
         print(f"  {spec_name}:")
-        print(f"    Avg OOS R²: {metrics['avg_r2_oos']:.3f}")
-        print(f"    Avg OOS RMSE: {metrics['avg_rmse_oos']:.3f}")
+        print(f"    Avg OOS R²: {metrics.get('avg_r2_oos', np.nan):.3f}")
+        print(f"    Avg OOS RMSE: {metrics.get('avg_rmse_oos', np.nan):.3f}")
         print()
 
     # -------------------------------------------------------------------------
@@ -268,9 +349,9 @@ def main():
         if spec_name == recommended_spec:
             print(f"{spec_name} (RECOMMENDED):")
             for regime_name, metrics in regime_data.items():
-                if metrics['n_windows'] > 0:
+                if metrics.get('n_windows', 0) > 0:
                     print(f"  {regime_name}:")
-                    print(f"    R² = {metrics['avg_r2_oos']:.3f}, RMSE = {metrics['avg_rmse_oos']:.3f}")
+                    print(f"    R² = {metrics.get('avg_r2_oos', np.nan):.3f}, RMSE = {metrics.get('avg_rmse_oos', np.nan):.3f}")
             print()
 
     # -------------------------------------------------------------------------
@@ -286,14 +367,16 @@ def main():
     )
 
     print("Production Specification:")
-    print(f"  Name: {production_blueprint['specification']}")
-    print(f"  Level: {production_blueprint['level']}")
-    print(f"  Parameters: {production_blueprint['parameters']['n_params']}")
-    print(f"  Complexity: {production_blueprint['complexity']}")
-    print(f"  Recalibration: {production_blueprint['recalibration_frequency']}")
+    print(f"  Name: {production_blueprint.get('specification', 'N/A')}")
+    print(f"  Level: {production_blueprint.get('level', 'N/A')}")
+    print(f"  Parameters: {production_blueprint.get('parameters', {}).get('n_params', 'N/A')}")
+    print(f"  Complexity: {production_blueprint.get('complexity', 'N/A')}")
+    print(f"  Recalibration: {production_blueprint.get('recalibration_frequency', 'N/A')}")
     print()
-    print(f"  Expected OOS R²: {production_blueprint['performance']['avg_r2_oos']:.3f}")
-    print(f"  Expected OOS RMSE: {production_blueprint['performance']['avg_rmse_oos']:.3f}")
+
+    perf = production_blueprint.get('performance', {})
+    print(f"  Expected OOS R²: {perf.get('avg_r2_oos', np.nan):.3f}")
+    print(f"  Expected OOS RMSE: {perf.get('avg_rmse_oos', np.nan):.3f}")
     print()
 
     # -------------------------------------------------------------------------
@@ -302,7 +385,7 @@ def main():
     print("Step 6: Generating visualizations...")
     print()
 
-    visualizer = StageEVisualizer(output_dir='./output/figures')
+    visualizer = StageEVisualizer(output_dir=str(figures_dir))
 
     figures = visualizer.create_all_stageE_figures(
         regression_data,
@@ -312,11 +395,7 @@ def main():
         output_prefix='stageE'
     )
 
-    print(f"  Created {len(figures)} figures:")
-    print("    - Figure E.1: OOS R² over rolling windows")
-    print("    - Figure E.2: Forecast error distribution")
-    print("    - Figure E.3: Predicted vs actual scatter")
-    print("    - Figure E.4: Specification comparison")
+    print(f"  Created {len(figures)} figures in {figures_dir}")
     print()
 
     # -------------------------------------------------------------------------
@@ -325,7 +404,7 @@ def main():
     print("Step 7: Generating reports...")
     print()
 
-    reporter = StageEReporter(output_dir='./output/reports')
+    reporter = StageEReporter(output_dir=str(reports_dir))
 
     reporter.save_all_reports(
         hierarchical_results,
@@ -335,13 +414,7 @@ def main():
         prefix='stageE'
     )
 
-    print()
-    print("  Created reports:")
-    print("    - Table E.1: Hierarchical test results")
-    print("    - Table E.2: Model comparison")
-    print("    - Table E.3: Performance by regime")
-    print("    - Table E.4: Production specification")
-    print("    - Implementation blueprint (5-7 pages)")
+    print(f"  Reports saved to {reports_dir}")
     print()
 
     # -------------------------------------------------------------------------
@@ -360,105 +433,37 @@ def main():
     print()
 
     # Implementation details
-    impl_formula = production_blueprint['implementation']
+    impl_formula = production_blueprint.get('implementation', 'N/A')
     print("Implementation Formula:")
     print(f"  {impl_formula}")
     print()
 
     # Expected performance
-    perf = production_blueprint['performance']
     print("Expected Performance:")
-    print(f"  • Out-of-Sample R²: {perf['avg_r2_oos']:.3f}")
-    print(f"  • Out-of-Sample RMSE: {perf['avg_rmse_oos']:.3f}")
+    print(f"  - Out-of-Sample R²: {perf.get('avg_r2_oos', np.nan):.3f}")
+    print(f"  - Out-of-Sample RMSE: {perf.get('avg_rmse_oos', np.nan):.3f}")
     print()
-
-    # Comparison to baseline
-    baseline = oos_summary.get('Standard DTS', {})
-    if baseline:
-        baseline_rmse = baseline.get('avg_rmse_oos', np.nan)
-        spec_rmse = perf.get('avg_rmse_oos', np.nan)
-
-        if not np.isnan(baseline_rmse) and not np.isnan(spec_rmse) and baseline_rmse > 0:
-            improvement = 100 * (baseline_rmse - spec_rmse) / baseline_rmse
-            print("Improvement over Standard DTS:")
-            print(f"  • RMSE Reduction: {improvement:.1f}%")
-            print()
 
     # Complexity and maintenance
     print("Implementation Details:")
-    print(f"  • Complexity: {production_blueprint['complexity']}")
-    print(f"  • Parameters: {production_blueprint['parameters']['n_params']}")
-    print(f"  • Recalibration: {production_blueprint['recalibration_frequency']}")
+    print(f"  - Complexity: {production_blueprint.get('complexity', 'N/A')}")
+    print(f"  - Parameters: {production_blueprint.get('parameters', {}).get('n_params', 'N/A')}")
+    print(f"  - Recalibration: {production_blueprint.get('recalibration_frequency', 'N/A')}")
     print()
 
     # Key advantages
     print("Key Advantages:")
-    if recommended_level == 1:
-        print("  ✓ Zero implementation cost (already in place)")
-        print("  ✓ No recalibration needed")
-        print("  ✓ Cross-sectional variation not significant")
-    elif recommended_level == 2:
-        print("  ✓ Theory-based (lookup tables)")
-        print("  ✓ No parameters to estimate")
-        print("  ✓ Beta close to 1.0 (theory validated)")
-        print("  ✓ Low implementation cost")
-    elif recommended_level == 3:
-        print("  ✓ Theory structure preserved")
-        print("  ✓ Only 2 parameters (parsimony)")
-        print("  ✓ Calibration corrects systematic bias")
-        print("  ✓ Annual recalibration sufficient")
-    elif recommended_level == 4:
-        print("  ✓ Flexible functional form")
-        print("  ✓ Captures nonlinearities and interactions")
-        print("  ✓ Significant R² improvement over simpler specs")
-        print("  ⚠ Annual recalibration required")
-    elif recommended_level == 5:
-        print("  ✓ Time-varying adjustment for regime shifts")
-        print("  ✓ Superior crisis performance")
-        print("  ✓ Macro state explicitly modeled")
-        print("  ⚠ Daily macro data feeds required")
-        print("  ⚠ Operational complexity")
-
-    print()
-
-    # Use cases
-    print("Best Suited For:")
-    if recommended_level == 1:
-        print("  • Simple portfolios with uniform characteristics")
-        print("  • Applications where precision not critical")
-    elif recommended_level == 2:
-        print("  • Cross-maturity hedging")
-        print("  • Capital structure relative value")
-        print("  • Risk models requiring theoretical coherence")
-    elif recommended_level == 3:
-        print("  • When theory approximately correct but needs scaling")
-        print("  • Moderate complexity acceptable")
-    elif recommended_level == 4:
-        print("  • Complex portfolios with diverse characteristics")
-        print("  • Precision-critical applications")
-        print("  • When theory structure inadequate")
-    elif recommended_level == 5:
-        print("  • Crisis risk management")
-        print("  • Regime-aware trading strategies")
-        print("  • When operational infrastructure supports daily updates")
-
+    for adv in production_blueprint.get('advantages', []):
+        print(f"  - {adv}")
     print()
 
     # Next steps
     print("Next Steps:")
-    print("  1. Review implementation blueprint (output/reports/stageE_implementation_blueprint.txt)")
+    print("  1. Review implementation blueprint")
     print("  2. Examine Figures E.1-E.3 for visual confirmation")
     print("  3. Validate on hold-out sample before production deployment")
-    print("  4. Set up monitoring infrastructure (Section 7 of blueprint)")
-    print("  5. Establish recalibration schedule (Section 4 of blueprint)")
-    print()
-
-    # Cautionary notes
-    print("Cautionary Notes:")
-    print("  ⚠ Out-of-sample performance may degrade if regime shifts")
-    print("  ⚠ Requires clean data (OAS, maturity, sector)")
-    print("  ⚠ Monitor performance monthly, recalibrate per schedule")
-    print("  ⚠ Edge cases (short maturity, distressed) need special handling")
+    print("  4. Set up monitoring infrastructure")
+    print("  5. Establish recalibration schedule")
     print()
 
     print("=" * 80)
@@ -467,30 +472,13 @@ def main():
     print()
 
     print("Summary:")
-    print(f"  • Hierarchical testing completed through Level {recommended_level}")
-    print(f"  • Recommended: {recommended_spec}")
-    print(f"  • Expected OOS R²: {perf['avg_r2_oos']:.3f}")
-    print(f"  • Implementation complexity: {production_blueprint['complexity']}")
-    print()
-
-    print("Deliverables:")
-    print("  • 4 figures (E.1-E.4) in output/figures/")
-    print("  • 4 tables (E.1-E.4) in output/reports/")
-    print("  • Implementation blueprint (5-7 pages)")
+    print(f"  - Hierarchical testing completed through Level {recommended_level}")
+    print(f"  - Recommended: {recommended_spec}")
+    print(f"  - Expected OOS R²: {perf.get('avg_r2_oos', np.nan):.3f}")
+    print(f"  - Implementation complexity: {production_blueprint.get('complexity', 'N/A')}")
     print()
 
     print("The research program is now COMPLETE!")
-    print("Stages 0, A, B, C, D, and E all finished.")
-    print()
-    print("You now have a production-ready specification with:")
-    print("  ✓ Empirical validation (Stages 0, A)")
-    print("  ✓ Theoretical grounding (Stage B)")
-    print("  ✓ Stability assessment (Stage C)")
-    print("  ✓ Robustness testing (Stage D)")
-    print("  ✓ Production blueprint (Stage E)")
-    print()
-
-    print("Ready for deployment! 🎉")
     print()
     print("=" * 80)
 

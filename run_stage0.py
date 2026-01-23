@@ -101,12 +101,18 @@ def main():
     bucket_ig = bucket_results['IG']
     bucket_hy = bucket_results['HY']
 
-    print(f"  IG: {bucket_ig['diagnostics']['n_buckets_populated']} buckets populated")
-    print(f"      λ = {bucket_ig['regression_results'].get('lambda', np.nan):.6f} "
-          f"(p = {bucket_ig['regression_results'].get('lambda_pvalue', np.nan):.4f})")
-    print(f"  HY: {bucket_hy['diagnostics']['n_buckets_populated']} buckets populated")
-    print(f"      λ = {bucket_hy['regression_results'].get('lambda', np.nan):.6f} "
-          f"(p = {bucket_hy['regression_results'].get('lambda_pvalue', np.nan):.4f})")
+    # Use correct keys from diagnostics
+    ig_n_buckets = bucket_ig['diagnostics'].get('n_buckets_with_regression', 0)
+    hy_n_buckets = bucket_hy['diagnostics'].get('n_buckets_with_regression', 0)
+
+    # Get summary stats for lambda estimates
+    ig_summary = bucket_ig.get('summary_statistics', {})
+    hy_summary = bucket_hy.get('summary_statistics', {})
+
+    print(f"  IG: {ig_n_buckets} buckets with regressions")
+    print(f"      Median β/λ ratio = {ig_summary.get('median_ratio', np.nan):.3f}")
+    print(f"  HY: {hy_n_buckets} buckets with regressions")
+    print(f"      Median β/λ ratio = {hy_summary.get('median_ratio', np.nan):.3f}")
     print()
 
     # Step 3: Within-issuer analysis
@@ -116,12 +122,16 @@ def main():
     within_ig = within_results['IG']
     within_hy = within_results['HY']
 
-    print(f"  IG: {within_ig['diagnostics']['n_issuer_weeks_with_estimate']} issuer-weeks analyzed")
-    print(f"      Pooled λ = {within_ig['pooled_estimate'].get('pooled_estimate', np.nan):.6f} "
-          f"± {within_ig['pooled_estimate'].get('pooled_se', np.nan):.6f}")
-    print(f"  HY: {within_hy['diagnostics']['n_issuer_weeks_with_estimate']} issuer-weeks analyzed")
-    print(f"      Pooled λ = {within_hy['pooled_estimate'].get('pooled_estimate', np.nan):.6f} "
-          f"± {within_hy['pooled_estimate'].get('pooled_se', np.nan):.6f}")
+    # Use correct keys - pooled_beta and pooled_beta_se
+    ig_pooled = within_ig['pooled_estimate']
+    hy_pooled = within_hy['pooled_estimate']
+
+    print(f"  IG: {within_ig['diagnostics'].get('n_issuer_weeks_with_estimate', 0)} issuer-weeks analyzed")
+    print(f"      Pooled β = {ig_pooled.get('pooled_beta', np.nan):.6f} "
+          f"± {ig_pooled.get('pooled_beta_se', np.nan):.6f}")
+    print(f"  HY: {within_hy['diagnostics'].get('n_issuer_weeks_with_estimate', 0)} issuer-weeks analyzed")
+    print(f"      Pooled β = {hy_pooled.get('pooled_beta', np.nan):.6f} "
+          f"± {hy_pooled.get('pooled_beta_se', np.nan):.6f}")
     print()
 
     # Step 4: Sector interaction analysis
@@ -131,9 +141,13 @@ def main():
     sector_ig = sector_results['IG']
     sector_hy = sector_results['HY']
 
-    print(f"  IG: Base λ = {sector_ig['base_regression'].get('lambda', np.nan):.6f}")
+    # Use correct keys - beta_0 instead of lambda
+    ig_base = sector_ig['base_regression']
+    hy_base = sector_hy['base_regression']
+
+    print(f"  IG: Base β = {ig_base.get('beta_0', np.nan):.6f}")
     print(f"      Sectors significant? {sector_ig['joint_test'].get('reject_null', False)}")
-    print(f"  HY: Base λ = {sector_hy['base_regression'].get('lambda', np.nan):.6f}")
+    print(f"  HY: Base β = {hy_base.get('beta_0', np.nan):.6f}")
     print(f"      Sectors significant? {sector_hy['joint_test'].get('reject_null', False)}")
     print()
 
@@ -230,11 +244,11 @@ def create_summary_report(
 
         f.write("Key Statistics:\n")
         stats_ig = synthesis_ig['key_statistics']
-        f.write(f"  Bucket λ:        {stats_ig['bucket_lambda']:.6f}\n")
-        f.write(f"  Within-Issuer λ: {stats_ig['within_lambda']:.6f}\n")
-        f.write(f"  Sector Base λ:   {stats_ig['base_lambda']:.6f}\n")
-        f.write(f"  Monotonic?       {'Yes' if stats_ig['monotonic'] else 'No'}\n")
-        f.write(f"  Sectors matter?  {'Yes' if stats_ig['sectors_significant'] else 'No'}\n\n")
+        f.write(f"  Bucket median β:  {stats_ig.get('bucket_median_beta', np.nan):.6f}\n")
+        f.write(f"  Within-Issuer β:  {stats_ig.get('within_beta', np.nan):.6f}\n")
+        f.write(f"  Sector Base β:    {stats_ig.get('base_beta', np.nan):.6f}\n")
+        f.write(f"  Monotonic?        {'Yes' if stats_ig.get('monotonic', False) else 'No'}\n")
+        f.write(f"  Sectors differ?   {'Yes' if stats_ig.get('sectors_differ', False) else 'No'}\n\n")
 
         f.write("Recommendations for Subsequent Stages:\n")
         for stage, rec in synthesis_ig['recommendations'].items():
@@ -251,11 +265,11 @@ def create_summary_report(
 
         f.write("Key Statistics:\n")
         stats_hy = synthesis_hy['key_statistics']
-        f.write(f"  Bucket λ:        {stats_hy['bucket_lambda']:.6f}\n")
-        f.write(f"  Within-Issuer λ: {stats_hy['within_lambda']:.6f}\n")
-        f.write(f"  Sector Base λ:   {stats_hy['base_lambda']:.6f}\n")
-        f.write(f"  Monotonic?       {'Yes' if stats_hy['monotonic'] else 'No'}\n")
-        f.write(f"  Sectors matter?  {'Yes' if stats_hy['sectors_significant'] else 'No'}\n\n")
+        f.write(f"  Bucket median β:  {stats_hy.get('bucket_median_beta', np.nan):.6f}\n")
+        f.write(f"  Within-Issuer β:  {stats_hy.get('within_beta', np.nan):.6f}\n")
+        f.write(f"  Sector Base β:    {stats_hy.get('base_beta', np.nan):.6f}\n")
+        f.write(f"  Monotonic?        {'Yes' if stats_hy.get('monotonic', False) else 'No'}\n")
+        f.write(f"  Sectors differ?   {'Yes' if stats_hy.get('sectors_differ', False) else 'No'}\n\n")
 
         f.write("Recommendations for Subsequent Stages:\n")
         for stage, rec in synthesis_hy['recommendations'].items():

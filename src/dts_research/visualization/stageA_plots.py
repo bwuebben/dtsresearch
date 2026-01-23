@@ -138,10 +138,16 @@ class StageAVisualizer:
         """
         # Extract coefficients
         combined = a2_results.get('combined', {})
-        if 'error' in combined:
+        # Check if A.2 was skipped or has an error or is missing required keys
+        if not combined or 'error' in combined or combined.get('skipped') or 'gamma_0' not in combined:
             fig, ax = plt.subplots(figsize=(10, 8))
-            ax.text(0.5, 0.5, f"Error: {combined['error']}",
+            msg = combined.get('error', 'Specification A.2 was not run')
+            ax.text(0.5, 0.5, msg,
                    ha='center', va='center', fontsize=14)
+            ax.set_title('Figure A.2: Beta Surface (Skipped)')
+            ax.axis('off')
+            if save_path:
+                fig.savefig(save_path, dpi=150, bbox_inches='tight')
             return fig
 
         gamma_0 = combined['gamma_0']

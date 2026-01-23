@@ -130,9 +130,12 @@ class StageBReporter:
         # Select top deviations
         table = theory_vs_reality.head(top_n).copy()
 
-        # Format for display
+        # Format for display - convert categorical to string if needed
+        rating = table['rating_bucket'].astype(str) if hasattr(table['rating_bucket'], 'cat') else table['rating_bucket']
+        maturity = table['maturity_bucket'].astype(str) if hasattr(table['maturity_bucket'], 'cat') else table['maturity_bucket']
+
         display = pd.DataFrame({
-            'Bucket': table['rating_bucket'] + ' ' + table['maturity_bucket'],
+            'Bucket': rating + ' ' + maturity,
             'Sector': table['sector'],
             'β (Stage A)': table['beta'].apply(lambda x: f"{x:.3f}"),
             'λ (Merton)': table['lambda_merton'].apply(lambda x: f"{x:.3f}"),
